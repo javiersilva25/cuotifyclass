@@ -1,0 +1,298 @@
+import React from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Separator } from '../../components/ui/separator';
+import { 
+  Users, 
+  DollarSign, 
+  AlertCircle, 
+  TrendingUp,
+  Calendar,
+  BookOpen,
+  CreditCard,
+  FileText
+} from 'lucide-react';
+import { useTesoreroActual, useResumenCursoTesorero, useEstadisticasFinancierasCurso } from '../../features/tesorero/hooks/useTesorero';
+import { formatCurrency, formatDate } from '../../utils/formatters';
+import { Link } from 'react-router-dom';
+
+const TesoreroDashboard = () => {
+  const { tesorero, loading: loadingTesorero } = useTesoreroActual();
+  const { resumen, loading: loadingResumen } = useResumenCursoTesorero();
+  const { estadisticas, loading: loadingEstadisticas } = useEstadisticasFinancierasCurso();
+
+  if (loadingTesorero || loadingResumen || loadingEstadisticas) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Cargando dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!tesorero || !tesorero.curso) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
+            <CardTitle>Sin Curso Asignado</CardTitle>
+            <CardDescription>
+              No tienes un curso asignado como tesorero. Contacta al administrador para obtener acceso.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  const curso = tesorero.curso;
+  const usuario = tesorero.usuario;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard Tesorero</h1>
+          <p className="text-muted-foreground">
+            Gestión financiera del curso {curso.nombre_curso}
+          </p>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Badge variant="secondary" className="flex items-center space-x-1">
+            <BookOpen className="h-4 w-4" />
+            <span>{curso.nombre_curso}</span>
+          </Badge>
+          <Badge variant="outline">
+            Año {curso.ano_escolar}
+          </Badge>
+        </div>
+      </div>
+
+      {/* Información del Tesorero */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <Users className="h-5 w-5" />
+            <span>Información del Tesorero</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Nombre</p>
+              <p className="text-lg font-semibold">{usuario.nombre} {usuario.apellido}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Email</p>
+              <p className="text-lg">{usuario.email}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Fecha de Asignación</p>
+              <p className="text-lg">{formatDate(tesorero.fecha_asignacion)}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Estadísticas Principales */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Alumnos</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{resumen?.total_alumnos || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              Alumnos en el curso
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Recaudado</CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {formatCurrency(estadisticas?.total_recaudado || 0)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {estadisticas?.total_pagos || 0} pagos realizados
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Deudas Pendientes</CardTitle>
+            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">
+              {formatCurrency(estadisticas?.total_pendiente || 0)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {estadisticas?.total_deudas || 0} deudas pendientes
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Eficiencia de Cobro</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {estadisticas?.total_recaudado && estadisticas?.total_pendiente
+                ? Math.round((estadisticas.total_recaudado / (estadisticas.total_recaudado + estadisticas.total_pendiente)) * 100)
+                : 0}%
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Porcentaje de cobro
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Acciones Rápidas */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Acciones Rápidas</CardTitle>
+          <CardDescription>
+            Gestiona las finanzas de tu curso de manera eficiente
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Button asChild className="h-auto p-4 flex flex-col items-center space-y-2">
+              <Link to="/tesorero/alumnos">
+                <Users className="h-6 w-6" />
+                <span>Ver Alumnos</span>
+                <span className="text-xs opacity-75">Gestionar alumnos del curso</span>
+              </Link>
+            </Button>
+
+            <Button asChild variant="outline" className="h-auto p-4 flex flex-col items-center space-y-2">
+              <Link to="/tesorero/pagos">
+                <CreditCard className="h-6 w-6" />
+                <span>Gestionar Pagos</span>
+                <span className="text-xs opacity-75">Ver y administrar pagos</span>
+              </Link>
+            </Button>
+
+            <Button asChild variant="outline" className="h-auto p-4 flex flex-col items-center space-y-2">
+              <Link to="/tesorero/deudas">
+                <AlertCircle className="h-6 w-6" />
+                <span>Deudas Pendientes</span>
+                <span className="text-xs opacity-75">Revisar deudas por cobrar</span>
+              </Link>
+            </Button>
+
+            <Button asChild variant="outline" className="h-auto p-4 flex flex-col items-center space-y-2">
+              <Link to="/tesorero/reportes">
+                <FileText className="h-6 w-6" />
+                <span>Generar Reportes</span>
+                <span className="text-xs opacity-75">Reportes financieros</span>
+              </Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Información del Curso */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <BookOpen className="h-5 w-5" />
+            <span>Información del Curso</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Nombre del Curso</p>
+              <p className="text-lg font-semibold">{curso.nombre_curso}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Nivel</p>
+              <p className="text-lg">{curso.nivel_id}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Año Escolar</p>
+              <p className="text-lg">{curso.ano_escolar}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Total Alumnos</p>
+              <p className="text-lg font-semibold">{resumen?.total_alumnos || 0}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Resumen Financiero */}
+      {estadisticas && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <DollarSign className="h-5 w-5" />
+              <span>Resumen Financiero</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium">Total Recaudado:</span>
+                <span className="text-lg font-bold text-green-600">
+                  {formatCurrency(estadisticas.total_recaudado)}
+                </span>
+              </div>
+              <Separator />
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium">Total Pendiente:</span>
+                <span className="text-lg font-bold text-red-600">
+                  {formatCurrency(estadisticas.total_pendiente)}
+                </span>
+              </div>
+              <Separator />
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium">Total Esperado:</span>
+                <span className="text-lg font-bold">
+                  {formatCurrency(estadisticas.total_recaudado + estadisticas.total_pendiente)}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Nota Informativa */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="pt-6">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-blue-900">
+                Acceso Restringido
+              </p>
+              <p className="text-sm text-blue-700 mt-1">
+                Como tesorero, solo puedes ver y gestionar información financiera del curso <strong>{curso.nombre_curso}</strong>. 
+                Para acceder a otros cursos, contacta al administrador del sistema.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default TesoreroDashboard;
+
