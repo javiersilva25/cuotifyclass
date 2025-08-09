@@ -11,7 +11,7 @@ export const APP_CONFIG = {
   IS_PRODUCTION: import.meta.env.MODE === 'production',
   
   // URLs y dominios
-  BASE_URL: import.meta.env.VITE_BASE_URL || 'http://localhost:5173',
+  BASE_URL: import.meta.env.VITE_BASE_URL || 'http://localhost:3001',
   API_URL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api',
   
   // Configuración de autenticación

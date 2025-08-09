@@ -1,7 +1,6 @@
 /**
  * Hook de autenticación v8.0
  * Sistema con RUT como identificador único y roles múltiples
- * Incluye servicio mock para desarrollo
  */
 
 import { useState, useEffect, useContext, createContext, useCallback } from 'react';
@@ -11,6 +10,52 @@ import { mockAuthService } from '../services/mockAuth';
 
 // Contexto de autenticación
 const AuthContext = createContext();
+
+// --- Utilidades ---
+const safeParseJSON = (value) => {
+  if (!value) return null;
+  if (value === 'undefined' || value === 'null') return null;
+  try { return JSON.parse(value); } catch { return null; }
+};
+
+function rutParaAPI(rutLimpio) {
+  const base = rutLimpio.slice(0, -1);
+  const dv = rutLimpio.slice(-1);
+  return `${base}-${dv}`.toUpperCase();
+}
+
+// Mapa de IDs ↔ nombres de roles (BD)
+const ROLE_MAP = {
+  1: 'apoderado',
+  2: 'directiva',
+  3: 'directiva_alumnos',
+  4: 'profesor',
+  5: 'direccion',
+  6: 'ccpp',
+  7: 'ccaa',
+  8: 'administrador',
+  9: 'tesorero',
+};
+
+function normalizeRoles(raw) {
+  if (!raw) return [];
+  return (Array.isArray(raw) ? raw : [raw])
+    .map((r) => {
+      if (typeof r === 'string') return r.toLowerCase();
+      if (typeof r === 'number') return (ROLE_MAP[r] || String(r)).toLowerCase();
+      const id = r?.rol_id ?? r?.id;
+      const byId = id ? ROLE_MAP[id] : null;
+      const byName = (r?.nombre_rol || r?.nombre || r?.codigo || r?.role || '').toLowerCase();
+      return (byId || byName || '').toLowerCase();
+    })
+    .filter(Boolean);
+}
+
+function normalizeUser(u) {
+  if (!u) return u;
+  const roles = normalizeRoles(u.roles || u.persona_roles || u.permisos || []);
+  return { ...u, roles };
+}
 
 // Provider de autenticación
 export const AuthProvider = ({ children }) => {
@@ -24,20 +69,26 @@ export const AuthProvider = ({ children }) => {
     const loadStoredAuth = () => {
       try {
         const storedToken = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
-        const storedUser = localStorage.getItem(AUTH_CONFIG.USER_KEY);
-        
+        const storedUserRaw = localStorage.getItem(AUTH_CONFIG.USER_KEY);
+        const storedUser = safeParseJSON(storedUserRaw);
+
         if (storedToken && storedUser) {
           setToken(storedToken);
-          setUser(JSON.parse(storedUser));
+          setUser(storedUser);
+        } else {
+          localStorage.removeItem(AUTH_CONFIG.TOKEN_KEY);
+          localStorage.removeItem(AUTH_CONFIG.USER_KEY);
+          localStorage.removeItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
         }
       } catch (error) {
         console.error('Error cargando datos de autenticación:', error);
-        clearAuth();
+        localStorage.removeItem(AUTH_CONFIG.TOKEN_KEY);
+        localStorage.removeItem(AUTH_CONFIG.USER_KEY);
+        localStorage.removeItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
       } finally {
         setLoading(false);
       }
     };
-
     loadStoredAuth();
   }, []);
 
@@ -51,17 +102,30 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
   }, []);
 
-  // Guardar autenticación
+  // Guardar autenticación (normalizando usuario/roles)
   const saveAuth = useCallback((userData, authToken, refreshToken = null) => {
-    setUser(userData);
-    setToken(authToken);
+    const userNorm = normalizeUser(userData || null);
+
+    setUser(userNorm);
+    setToken(authToken || null);
     setError(null);
-    
-    localStorage.setItem(AUTH_CONFIG.TOKEN_KEY, authToken);
-    localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(userData));
-    
+
+    if (authToken) {
+      localStorage.setItem(AUTH_CONFIG.TOKEN_KEY, authToken);
+    } else {
+      localStorage.removeItem(AUTH_CONFIG.TOKEN_KEY);
+    }
+
+    if (userNorm && typeof userNorm === 'object') {
+      localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(userNorm));
+    } else {
+      localStorage.removeItem(AUTH_CONFIG.USER_KEY);
+    }
+
     if (refreshToken) {
       localStorage.setItem(AUTH_CONFIG.REFRESH_TOKEN_KEY, refreshToken);
+    } else {
+      localStorage.removeItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
     }
   }, []);
 
@@ -71,47 +135,61 @@ export const AuthProvider = ({ children }) => {
     setError(null);
 
     try {
-      // Validar RUT
       const rutLimpio = limpiarRut(rut);
-      if (!validarRut(rutLimpio)) {
-        throw new Error('RUT inválido');
+      if (!validarRut(rutLimpio)) throw new Error('RUT inválido');
+      const rutApi = rutParaAPI(rutLimpio);
+
+      const resp = await fetch(buildUrl(API_ENDPOINTS.AUTH.LOGIN), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rut: rutApi, password, tipoUsuario }),
+      });
+
+      let data = null;
+      try { data = await resp.json(); } catch { data = {}; }
+
+      if (!resp.ok) throw new Error(data?.message || data?.error || 'Credenciales inválidas');
+
+      // Soportar respuesta plana y envuelta en data
+      const token =
+        data?.token || data?.accessToken || data?.jwt ||
+        data?.data?.token || data?.data?.accessToken;
+
+      let userResp =
+        data?.user || data?.usuario || data?.perfil ||
+        data?.data?.user || data?.data?.usuario;
+
+      const mustChange =
+        data?.debeCambiarPassword ?? data?.data?.debeCambiarPassword ?? false;
+
+      if (!userResp) {
+        userResp = {
+          rut: rutApi,
+          userType: data?.userType || data?.tipoUsuario || 'admin',
+          roles: data?.roles || data?.data?.roles || [],
+        };
       }
 
-      // Usar servicio mock para desarrollo
-      const result = await mockAuthService.login(rut, password, tipoUsuario);
+      if (!token) throw new Error('No se recibió token de autenticación');
 
-      if (!result.success) {
-        throw new Error(result.error || 'Error en el login');
-      }
+      // Guardar sesión normalizando
+      saveAuth(userResp, token, data?.refreshToken || data?.data?.refreshToken);
 
-      // Guardar datos de autenticación
-      saveAuth(result.data.user, result.data.token);
-
-      return {
-        success: true,
-        user: result.data.user,
-        token: result.data.token
-      };
-
+      return { success: true, user: normalizeUser(userResp), token, mustChange };
     } catch (error) {
-      const errorMessage = error.message || 'Error de conexión';
-      setError(errorMessage);
-      
-      return {
-        success: false,
-        error: errorMessage
-      };
+      const msg = error.message || 'Error de conexión';
+      setError(msg);
+      return { success: false, error: msg };
     } finally {
       setLoading(false);
     }
   }, [saveAuth]);
+
   // Logout
   const logout = useCallback(async () => {
     setLoading(true);
-
     try {
-      // Usar servicio mock para logout
-      await mockAuthService.logout();
+      await mockAuthService.logout(); // o tu endpoint real si aplica
     } catch (error) {
       console.error('Error en logout:', error);
     } finally {
@@ -123,7 +201,6 @@ export const AuthProvider = ({ children }) => {
   // Verificar token
   const verifyToken = useCallback(async () => {
     if (!token) return false;
-
     try {
       const response = await fetch(buildUrl(API_ENDPOINTS.AUTH.VERIFY), {
         method: 'GET',
@@ -136,13 +213,12 @@ export const AuthProvider = ({ children }) => {
       }
 
       const data = await response.json();
-      
-      // Actualizar datos del usuario si han cambiado
-      if (data.user) {
-        setUser(data.user);
-        localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(data.user));
+      const u = data?.user || data?.data?.user;
+      if (u) {
+        const userNorm = normalizeUser(u);
+        setUser(userNorm);
+        localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(userNorm));
       }
-
       return true;
     } catch (error) {
       console.error('Error verificando token:', error);
@@ -154,7 +230,6 @@ export const AuthProvider = ({ children }) => {
   // Refrescar token
   const refreshToken = useCallback(async () => {
     const storedRefreshToken = localStorage.getItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
-    
     if (!storedRefreshToken) {
       clearAuth();
       return false;
@@ -163,12 +238,8 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await fetch(buildUrl(API_ENDPOINTS.AUTH.REFRESH), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          refreshToken: storedRefreshToken
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: storedRefreshToken }),
       });
 
       if (!response.ok) {
@@ -177,8 +248,10 @@ export const AuthProvider = ({ children }) => {
       }
 
       const data = await response.json();
-      saveAuth(data.user, data.token, data.refreshToken);
-      
+      const u = data?.user || data?.data?.user;
+      const t = data?.token || data?.data?.token;
+      const r = data?.refreshToken || data?.data?.refreshToken;
+      saveAuth(normalizeUser(u), t, r);
       return true;
     } catch (error) {
       console.error('Error refrescando token:', error);
@@ -189,42 +262,27 @@ export const AuthProvider = ({ children }) => {
 
   // Cambiar contraseña
   const changePassword = useCallback(async (currentPassword, newPassword) => {
-    if (!user || !token) {
-      throw new Error('Usuario no autenticado');
-    }
+    if (!user || !token) throw new Error('Usuario no autenticado');
 
     try {
       const response = await fetch(buildUrl(API_ENDPOINTS.AUTH.CHANGE_PASSWORD), {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({
-          currentPassword,
-          newPassword
-        }),
+        body: JSON.stringify({ currentPassword, newPassword }),
       });
 
       const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Error cambiando contraseña');
 
-      if (!response.ok) {
-        throw new Error(data.message || 'Error cambiando contraseña');
-      }
-
-      return {
-        success: true,
-        message: data.message
-      };
+      return { success: true, message: data.message };
     } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
   }, [user, token]);
 
-  // Obtener datos del usuario actual
+  // Obtener usuario actual
   const getCurrentUser = useCallback(async () => {
     if (!token) return null;
-
     try {
       const response = await fetch(buildUrl(API_ENDPOINTS.AUTH.ME), {
         method: 'GET',
@@ -237,125 +295,87 @@ export const AuthProvider = ({ children }) => {
       }
 
       const data = await response.json();
-      
-      // Actualizar datos del usuario
-      setUser(data.user);
-      localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(data.user));
-      
-      return data.user;
+      const userNorm = normalizeUser(data?.user || data?.data?.user);
+      setUser(userNorm);
+      localStorage.setItem(AUTH_CONFIG.USER_KEY, JSON.stringify(userNorm));
+      return userNorm;
     } catch (error) {
       console.error('Error obteniendo usuario actual:', error);
       return null;
     }
   }, [token, clearAuth]);
 
-  // Verificar si el usuario tiene un rol específico
+  // Roles
   const hasRole = useCallback((roleName) => {
     if (!user || !user.roles) return false;
-    return user.roles.some(rol => rol.nombre === roleName || rol.codigo === roleName);
+    return user.roles.some((r) =>
+      (typeof r === 'string' ? r : '').toLowerCase() === roleName.toLowerCase()
+    );
   }, [user]);
 
-  // Verificar si el usuario tiene alguno de los roles especificados
   const hasAnyRole = useCallback((roleNames) => {
     if (!user || !user.roles) return false;
-    return roleNames.some(roleName => hasRole(roleName));
+    return roleNames.some((roleName) => hasRole(roleName));
   }, [user, hasRole]);
 
-  // Verificar si el usuario puede acceder a un curso específico (para tesoreros)
   const canAccessCourse = useCallback((cursoId) => {
     if (!user) return false;
-    
-    // Administradores pueden acceder a todo
     if (hasRole('administrador')) return true;
-    
-    // Tesoreros solo pueden acceder a su curso asignado
     if (hasRole('tesorero') && user.cursoAsignado) {
       return user.cursoAsignado.id === cursoId;
     }
-    
     return false;
   }, [user, hasRole]);
 
-  // Obtener tipo de usuario principal
   const getUserType = useCallback(() => {
     if (!user || !user.roles) return null;
-    
-    // Prioridad: administrador > profesor > tesorero > apoderado > alumno
     if (hasRole('administrador')) return 'admin';
     if (hasRole('profesor')) return 'profesor';
     if (hasRole('tesorero')) return 'tesorero';
     if (hasRole('apoderado')) return 'apoderado';
     if (hasRole('alumno')) return 'alumno';
-    
     return null;
   }, [user, hasRole]);
 
-  // Verificar si está autenticado
+  // Flags
   const isAuthenticated = Boolean(user && token);
-
-  // Verificar si es administrador
   const isAdmin = hasRole('administrador');
-
-  // Verificar si es apoderado
   const isApoderado = hasRole('apoderado');
-
-  // Verificar si es tesorero
   const isTesorero = hasRole('tesorero');
-
-  // Verificar si es profesor
   const isProfesor = hasRole('profesor');
-
-  // Verificar si es alumno
   const isAlumno = hasRole('alumno');
 
   const value = {
-    // Estado
     user,
     token,
     loading,
     error,
     isAuthenticated,
-    
-    // Métodos de autenticación
     login,
     logout,
     verifyToken,
     refreshToken,
     changePassword,
     getCurrentUser,
-    
-    // Verificación de roles
     hasRole,
     hasAnyRole,
     canAccessCourse,
     getUserType,
-    
-    // Helpers de roles
     isAdmin,
     isApoderado,
     isTesorero,
     isProfesor,
     isAlumno,
-    
-    // Utilidades
     clearAuth,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 // Hook para usar el contexto de autenticación
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  
-  if (!context) {
-    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
-  }
-  
+  if (!context) throw new Error('useAuth debe ser usado dentro de un AuthProvider');
   return context;
 };
 
@@ -365,29 +385,12 @@ export const useRequireAuth = (requiredRoles = []) => {
   const [canAccess, setCanAccess] = useState(false);
 
   useEffect(() => {
-    const checkAccess = () => {
-      if (!auth.isAuthenticated) {
-        setCanAccess(false);
-        return;
-      }
-
-      if (requiredRoles.length === 0) {
-        setCanAccess(true);
-        return;
-      }
-
-      const hasRequiredRole = auth.hasAnyRole(requiredRoles);
-      setCanAccess(hasRequiredRole);
-    };
-
-    checkAccess();
+    if (!auth.isAuthenticated) return setCanAccess(false);
+    if (requiredRoles.length === 0) return setCanAccess(true);
+    setCanAccess(auth.hasAnyRole(requiredRoles));
   }, [auth.isAuthenticated, auth.user, requiredRoles]);
 
-  return {
-    ...auth,
-    canAccess,
-    loading: auth.loading
-  };
+  return { ...auth, canAccess, loading: auth.loading };
 };
 
 // Hook para manejar login con RUT
@@ -400,37 +403,18 @@ export const useRutLogin = () => {
   const handleRutChange = useCallback((value) => {
     const rutLimpio = limpiarRut(value);
     setRutValue(value);
-    
-    if (rutLimpio.length === 0) {
-      setRutValid(false);
-      setRutError('');
-      return;
-    }
-
+    if (rutLimpio.length === 0) { setRutValid(false); setRutError(''); return; }
     const isValid = validarRut(rutLimpio);
     setRutValid(isValid);
     setRutError(isValid ? '' : 'RUT inválido');
   }, []);
 
   const loginWithRut = useCallback(async (password, tipoUsuario) => {
-    if (!rutValid) {
-      return {
-        success: false,
-        error: 'RUT inválido'
-      };
-    }
-
+    if (!rutValid) return { success: false, error: 'RUT inválido' };
     return await login(rutValue, password, tipoUsuario);
   }, [login, rutValue, rutValid]);
 
-  return {
-    rutValue,
-    rutValid,
-    rutError,
-    handleRutChange,
-    loginWithRut
-  };
+  return { rutValue, rutValid, rutError, handleRutChange, loginWithRut };
 };
 
 export default useAuth;
-

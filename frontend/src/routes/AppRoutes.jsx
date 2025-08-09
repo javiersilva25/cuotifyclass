@@ -1,6 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import ProtectedRoute from '../features/auth/components/ProtectedRoute';
-import { PublicRoute } from '../features/auth/components/ProtectedRoute';
+import ProtectedRoute, { PublicRoute } from '../features/auth/components/ProtectedRoute';
 import SimpleLogin from '../components/ui/simple-login';
 
 // Páginas administrativas
@@ -31,7 +30,10 @@ import GestionUsuarios from '../pages/admin/GestionUsuarios';
 export default function AppRoutes() {
   return (
     <Routes>
-      {/* Ruta pública */}
+      {/* Home -> dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+      {/* Pública */}
       <Route
         path="/login"
         element={
@@ -41,11 +43,11 @@ export default function AppRoutes() {
         }
       />
 
-      {/* Rutas de apoderados */}
+      {/* Apoderado */}
       <Route
         path="/apoderado/dashboard"
         element={
-          <ProtectedRoute requiredUserType="apoderado">
+          <ProtectedRoute requiredRoles={['apoderado']}>
             <ApoderadoDashboard />
           </ProtectedRoute>
         }
@@ -53,7 +55,7 @@ export default function AppRoutes() {
       <Route
         path="/apoderado/pagos"
         element={
-          <ProtectedRoute requiredUserType="apoderado">
+          <ProtectedRoute requiredRoles={['apoderado']}>
             <ApoderadoPagos />
           </ProtectedRoute>
         }
@@ -61,17 +63,17 @@ export default function AppRoutes() {
       <Route
         path="/apoderado/historial"
         element={
-          <ProtectedRoute requiredUserType="apoderado">
+          <ProtectedRoute requiredRoles={['apoderado']}>
             <ApoderadoHistorial />
           </ProtectedRoute>
         }
       />
 
-      {/* Rutas de tesoreros */}
+      {/* Tesorero */}
       <Route
         path="/tesorero/dashboard"
         element={
-          <ProtectedRoute requiredUserType="tesorero">
+          <ProtectedRoute requiredRoles={['tesorero']}>
             <TesoreroDashboard />
           </ProtectedRoute>
         }
@@ -79,104 +81,28 @@ export default function AppRoutes() {
       <Route
         path="/tesorero/alumnos"
         element={
-          <ProtectedRoute requiredUserType="tesorero">
+          <ProtectedRoute requiredRoles={['tesorero']}>
             <TesoreroAlumnos />
           </ProtectedRoute>
         }
       />
 
-      {/* Rutas administrativas protegidas */}
-      <Route
-        path="/alumnos"
-        element={
-          <ProtectedRoute>
-            <AlumnosPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/cursos"
-        element={
-          <ProtectedRoute>
-            <CursosPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/cobros"
-        element={
-          <ProtectedRoute>
-            <CobrosPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/gastos"
-        element={
-          <ProtectedRoute>
-            <GastosPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/categorias-gasto"
-        element={
-          <ProtectedRoute>
-            <CategoriasGastoPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/movimientos-ccaa"
-        element={
-          <ProtectedRoute>
-            <MovimientoCcaaPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/movimientos-cppp"
-        element={
-          <ProtectedRoute>
-            <MovimientoCcppPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/deudas-alumno"
-        element={
-          <ProtectedRoute>
-            <DeudasAlumnoPage />
-          </ProtectedRoute>
-        }
-      />      <Route
-        path="/deudas-companero"
-        element={
-          <ProtectedRoute>
-            <DeudasCompaneroPage />
-          </ProtectedRoute>
-        }
-      />
-      
-      {/* Ruta de carga masiva */}
-      <Route
-        path="/admin/carga-masiva"
-        element={
-          <ProtectedRoute requiredUserType="admin">
-            <CargaMasiva />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/gestion-usuarios"
-        element={
-          <ProtectedRoute requiredUserType="admin">
-            <GestionUsuarios />
-          </ProtectedRoute>
-        }
-      />
+      {/* Administrativas (requieren administrador) */}
+      <Route path="/alumnos" element={<ProtectedRoute requiredRoles={['administrador']}><AlumnosPage /></ProtectedRoute>} />
+      <Route path="/cursos" element={<ProtectedRoute requiredRoles={['administrador']}><CursosPage /></ProtectedRoute>} />
+      <Route path="/cobros" element={<ProtectedRoute requiredRoles={['administrador','tesorero']}><CobrosPage /></ProtectedRoute>} />
+      <Route path="/gastos" element={<ProtectedRoute requiredRoles={['administrador','tesorero']}><GastosPage /></ProtectedRoute>} />
+      <Route path="/categorias-gasto" element={<ProtectedRoute requiredRoles={['administrador']}><CategoriasGastoPage /></ProtectedRoute>} />
+      <Route path="/movimientos-ccaa" element={<ProtectedRoute requiredRoles={['administrador','tesorero']}><MovimientoCcaaPage /></ProtectedRoute>} />
+      <Route path="/movimientos-ccpp" element={<ProtectedRoute requiredRoles={['administrador','tesorero']}><MovimientoCcppPage /></ProtectedRoute>} />
+      <Route path="/deudas-alumno" element={<ProtectedRoute requiredRoles={['administrador','tesorero','apoderado']}><DeudasAlumnoPage /></ProtectedRoute>} />
+      <Route path="/deudas-companero" element={<ProtectedRoute requiredRoles={['administrador','tesorero']}><DeudasCompaneroPage /></ProtectedRoute>} />
 
-      {/* Ruta por defecto */}
+      {/* Admin general */}
+      <Route path="/admin/carga-masiva" element={<ProtectedRoute requiredRoles={['administrador']}><CargaMasiva /></ProtectedRoute>} />
+      <Route path="/admin/gestion-usuarios" element={<ProtectedRoute requiredRoles={['administrador']}><GestionUsuarios /></ProtectedRoute>} />
+
+      {/* Dashboard por defecto */}
       <Route
         path="/dashboard"
         element={
@@ -186,7 +112,7 @@ export default function AppRoutes() {
         }
       />
 
-      {/* Redirección por defecto */}
+      {/* Fallback */}
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );

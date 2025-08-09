@@ -419,12 +419,12 @@ export const buildUrl = (endpoint, params = {}) => {
 
 // Función para obtener headers con autenticación
 export const getAuthHeaders = () => {
-  const token = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
-  return {
-    ...DEFAULT_HEADERS,
-    ...(token && { Authorization: `Bearer ${token}` })
-  };
+  const t = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
+  return t
+    ? { ...DEFAULT_HEADERS, Authorization: `Bearer ${t}` }
+    : { ...DEFAULT_HEADERS };
 };
+
 
 // Exportar configuración por defecto
 export default {

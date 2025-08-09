@@ -1,5 +1,5 @@
 import { useNavigate, NavLink } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext'; // Ajusta si la ruta es distinta
+import { useAuth } from '../features/auth/hooks/useAuth';
 import { LogOut, Menu } from 'lucide-react';
 import { useState } from 'react';
 
@@ -29,10 +29,8 @@ export default function Navbar() {
   return (
     <header className="w-full bg-background text-foreground border-b border-border shadow-sm">
       <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-        {/* Logo / título */}
         <h1 className="text-xl font-bold text-primary">Sistema Escolar</h1>
 
-        {/* Menú desplegable */}
         <div className="relative">
           <button
             onClick={() => setMenuOpen((prev) => !prev)}

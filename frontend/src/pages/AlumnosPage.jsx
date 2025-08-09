@@ -13,12 +13,17 @@ import {
   useAlumnosStats,
   useAlumnoValidation
 } from '../features/alumnos/hooks/useAlumnos.js';
-import  Navbar  from '../pages/Navbar.jsx';
+import Navbar from '../pages/Navbar.jsx';
 import { toast } from 'sonner';
 
 export function AlumnosPage() {
-  const { canManageAlumnos } = usePermissions();
+  const { hasPermission } = usePermissions();
   const { validateAlumnoForm } = useAlumnoValidation();
+
+  // Derivar permisos reales
+  const canViewAlumnos = hasPermission('view_alumnos');
+  const canEditAlumnos = hasPermission('edit_alumnos');
+  const canManageAlumnos = canViewAlumnos; // controla acceso a la página
 
   const [showForm, setShowForm] = useState(false);
   const [editingAlumno, setEditingAlumno] = useState(null);
@@ -65,47 +70,20 @@ export function AlumnosPage() {
   }
 
   const statsData = [
-    {
-      title: 'Total Alumnos',
-      value: stats.total,
-      icon: 'Users',
-      color: 'blue',
-      description: 'Estudiantes registrados',
-    },
-    {
-      title: 'Alumnos Activos',
-      value: stats.activos,
-      icon: 'UserCheck',
-      color: 'green',
-      description: 'Estudiantes activos',
-      trend: {
-        value: stats.porcentajeActivos,
-        direction: 'up',
-        period: 'del total',
-      },
-    },
-    {
-      title: 'Nuevos Este Mes',
-      value: stats.nuevosEsteMes,
-      icon: 'UserPlus',
-      color: 'emerald',
-      description: 'Matrículas recientes',
-    },
-    {
-      title: 'Cursos Activos',
-      value: Object.keys(stats.porCurso).length,
-      icon: 'GraduationCap',
-      color: 'purple',
-      description: 'Cursos con alumnos',
-    },
+    { title: 'Total Alumnos', value: stats.total, icon: 'Users', color: 'blue', description: 'Estudiantes registrados' },
+    { title: 'Alumnos Activos', value: stats.activos, icon: 'UserCheck', color: 'green', description: 'Estudiantes activos', trend: { value: stats.porcentajeActivos, direction: 'up', period: 'del total' } },
+    { title: 'Nuevos Este Mes', value: stats.nuevosEsteMes, icon: 'UserPlus', color: 'emerald', description: 'Matrículas recientes' },
+    { title: 'Cursos Activos', value: Object.keys(stats.porCurso).length, icon: 'GraduationCap', color: 'purple', description: 'Cursos con alumnos' },
   ];
 
   const handleCreateAlumno = () => {
+    if (!canEditAlumnos) return toast.warning('No tienes permiso para crear alumnos');
     setEditingAlumno(null);
     setShowForm(true);
   };
 
   const handleEditAlumno = (alumno) => {
+    if (!canEditAlumnos) return toast.warning('No tienes permiso para editar alumnos');
     setEditingAlumno(alumno);
     setShowForm(true);
   };
@@ -129,27 +107,25 @@ export function AlumnosPage() {
   };
 
   const handleDeleteAlumno = async (id) => {
+    if (!canEditAlumnos) return toast.warning('No tienes permiso para desactivar alumnos');
     if (window.confirm('¿Estás seguro de que deseas desactivar este alumno?')) {
       await deleteAlumno(id);
     }
   };
 
   const handleRestoreAlumno = async (id) => {
+    if (!canEditAlumnos) return toast.warning('No tienes permiso para restaurar alumnos');
     await restoreAlumno(id);
   };
 
   const pageVariants = {
     hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.5 }
-    },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
   };
 
   return (
     <>
-      <Navbar /> {/* ✅ Sección navbar agregada */}
+      <Navbar />
 
       <motion.div
         variants={pageVariants}
@@ -160,15 +136,11 @@ export function AlumnosPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Gestión de Alumnos
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Administra la información de los estudiantes del centro educativo
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900">Gestión de Alumnos</h1>
+            <p className="text-gray-600 mt-1">Administra la información de los estudiantes del centro educativo</p>
           </div>
 
-          <Button onClick={handleCreateAlumno} size="lg">
+          <Button onClick={handleCreateAlumno} size="lg" disabled={!canEditAlumnos}>
             <UserPlus className="w-5 h-5 mr-2" />
             Nuevo Alumno
           </Button>
@@ -185,9 +157,7 @@ export function AlumnosPage() {
                 <GraduationCap className="w-5 h-5" />
                 <span>Distribución por Curso</span>
               </CardTitle>
-              <CardDescription>
-                Número de alumnos activos por curso
-              </CardDescription>
+              <CardDescription>Número de alumnos activos por curso</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
@@ -201,12 +171,8 @@ export function AlumnosPage() {
                       transition={{ duration: 0.3 }}
                       className="text-center p-4 bg-gray-50 rounded-lg"
                     >
-                      <p className="text-2xl font-bold text-blue-600">
-                        {cantidad}
-                      </p>
-                      <p className="text-sm text-gray-600 font-medium">
-                        {curso}
-                      </p>
+                      <p className="text-2xl font-bold text-blue-600">{cantidad}</p>
+                      <p className="text-sm text-gray-600 font-medium">{curso}</p>
                     </motion.div>
                   ))}
               </div>
@@ -226,6 +192,7 @@ export function AlumnosPage() {
           onDeleteAlumno={handleDeleteAlumno}
           onRestoreAlumno={handleRestoreAlumno}
           onRefresh={loadAlumnos}
+          canEdit={canEditAlumnos}
         />
 
         {/* Formulario */}
@@ -235,20 +202,15 @@ export function AlumnosPage() {
           onClose={handleCloseForm}
           onSubmit={handleSubmitForm}
           validateForm={validateAlumnoForm}
+          readOnly={!canEditAlumnos}
         />
 
         {/* Error */}
         {error && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="fixed bottom-4 right-4 z-50"
-          >
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="fixed bottom-4 right-4 z-50">
             <Card className="border-red-200 bg-red-50">
               <CardContent className="p-4">
-                <p className="text-red-700 text-sm">
-                  {error}
-                </p>
+                <p className="text-red-700 text-sm">{error}</p>
               </CardContent>
             </Card>
           </motion.div>
