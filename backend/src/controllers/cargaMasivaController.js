@@ -190,10 +190,8 @@ class CargaMasivaController {
       const workbook = CargaMasivaService.generarPlantillaExcel();
       
       // Generar buffer
-      const buffer = require('xlsx').write(workbook, { 
-        type: 'buffer', 
-        bookType: 'xlsx' 
-      });
+      // Generar plantilla usando el servicio seguro
+      const buffer = await CargaMasivaService.generarPlantilla();
       
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', 'attachment; filename="plantilla_usuarios.xlsx"');

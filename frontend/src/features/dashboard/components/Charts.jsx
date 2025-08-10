@@ -106,8 +106,8 @@ export function MonthlyTrendsChart({ data, className }) {
                     <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
                   </linearGradient>
                   <linearGradient id="colorGastos" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0.1}/>
+                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#f97316" stopOpacity={0.1}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -134,7 +134,7 @@ export function MonthlyTrendsChart({ data, className }) {
                 <Area
                   type="monotone"
                   dataKey="gastos"
-                  stroke="#ef4444"
+                  stroke="#f97316"
                   fillOpacity={1}
                   fill="url(#colorGastos)"
                   name="Gastos"
@@ -203,7 +203,7 @@ export function CourseStatsChart({ data, className }) {
                 <Bar 
                   yAxisId="left"
                   dataKey="alumnos" 
-                  fill="#3b82f6" 
+                  fill="#1e3a8a" 
                   name="Alumnos"
                   radius={[4, 4, 0, 0]}
                 />
@@ -368,7 +368,7 @@ export function ExpenseCategoriesChart({ data, className }) {
 }
 
 // Gráfico compacto para widgets
-export function MiniChart({ data, type = 'line', color = '#3b82f6', className }) {
+export function MiniChart({ data, type = 'line', color = '#1e3a8a', className }) {
   const chartVariants = {
     hidden: { opacity: 0 },
     visible: { 

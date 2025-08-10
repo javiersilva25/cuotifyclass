@@ -23,7 +23,7 @@ router.use('/carga-masiva', cargaMasivaRoutes);
 router.get('/info', (req, res) => {
   res.json({
     nombre: 'Sistema de Gestión Escolar API',
-    version: '8.0.0',
+    version: '8.6.2',
     descripcion: 'API completa para gestión escolar con geografía CUT 2018, módulos de apoderados, tesoreros, pagos unificados, reportes y carga masiva de usuarios con RUT',
     estado: 'Activo',
     fecha_version: '2024-12-19',
@@ -175,7 +175,7 @@ router.get('/health', (req, res) => {
   res.json({
     estado: 'OK',
     timestamp: new Date().toISOString(),
-    version: '8.0.0',
+    version: '8.6.2',
     uptime: process.uptime(),
     memoria: process.memoryUsage(),
     geografia: 'CUT 2018 Ready',

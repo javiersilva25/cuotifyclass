@@ -11,7 +11,7 @@ const getApiBaseUrl = () => {
   }
   
   // En desarrollo, usar localhost
-  return import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  return 'http://localhost:3000';
 };
 
 // Configuración principal de la API
@@ -20,7 +20,7 @@ export const API_CONFIG = {
   TIMEOUT: 30000, // 30 segundos
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000, // 1 segundo
-  VERSION: '8.0.0',
+  VERSION: '8.6.2',
 };
 
 // Endpoints de la API v8.0
@@ -419,12 +419,12 @@ export const buildUrl = (endpoint, params = {}) => {
 
 // Función para obtener headers con autenticación
 export const getAuthHeaders = () => {
-  const t = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
-  return t
-    ? { ...DEFAULT_HEADERS, Authorization: `Bearer ${t}` }
-    : { ...DEFAULT_HEADERS };
+  const token = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
+  return {
+    ...DEFAULT_HEADERS,
+    ...(token && { Authorization: `Bearer ${token}` })
+  };
 };
-
 
 // Exportar configuración por defecto
 export default {
