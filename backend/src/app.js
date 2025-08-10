@@ -103,27 +103,25 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // Función para inicializar la aplicación
+// ...código previo...
+
 const initializeApp = async () => {
   try {
-    // Verificar conexión a la base de datos
     await sequelize.authenticate();
     Logger.info('Conexión a la base de datos establecida correctamente');
 
-    // Sincronizar modelos (solo en desarrollo)
-    if (process.env.NODE_ENV === 'development') {
-      await sequelize.sync({ alter: true });
-      Logger.info('Modelos sincronizados con la base de datos');
-    }
+    // ❌ Quita cualquier sync automático
+    // await sequelize.sync({ alter: true });
+    // await sequelize.sync({ force: true });
+    // await sequelize.sync();
 
     Logger.info('Aplicación inicializada correctamente');
   } catch (error) {
-    Logger.error('Error al inicializar la aplicación', {
-      error: error.message,
-      stack: error.stack
-    });
+    Logger.error('Error al inicializar la aplicación', { error: error.message, stack: error.stack });
     throw error;
   }
 };
+
 
 // Función para cerrar la aplicación gracefully
 const closeApp = async () => {
