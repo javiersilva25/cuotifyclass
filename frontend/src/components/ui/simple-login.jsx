@@ -1,14 +1,17 @@
 /**
- * Componente de login simple para testing v8.0
+ * Componente de login simple para testing v8.2
  */
-
 import React, { useState } from 'react';
 import { useAuth } from '../../features/auth/hooks/useAuth';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 export function SimpleLogin() {
-  const { login, loading, error } = useAuth();
-  const [rut, setRut] = useState("");
-  const [password, setPassword] = useState("");
+  const { login, loading, error, getUserType, getCurrentUser } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [rut, setRut] = useState('');
+  const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
   const handleSubmit = async (e) => {
@@ -16,28 +19,50 @@ export function SimpleLogin() {
     setLoginError('');
 
     try {
-      // Usar autenticación real con el backend v8.0
-      // console.log("Intentando login real con:", { rut, password });
-      
-      const result = await login(rut, password, 'admin');
-      
+      const result = await login(rut, password);
       if (result && result.success) {
-        console.log('Login exitoso:', result);
-        window.location.href = '/dashboard';
+        // Asegura usuario actualizado (roles normalizados) por si el login no lo trae completo
+        await getCurrentUser();
+
+        // Si venía de una ruta protegida, respétala
+        const from = location.state?.from?.pathname;
+        if (from && from !== '/login') {
+          navigate(from, { replace: true });
+          return;
+        }
+
+        // Redirección por rol
+        const type = getUserType();
+        switch (type) {
+          case 'apoderado':
+            navigate('/apoderado/dashboard', { replace: true });
+            break;
+          case 'tesorero':
+            navigate('/tesorero/dashboard', { replace: true });
+            break;
+          case 'profesor':
+          case 'directivo':
+          case 'alumno':
+            navigate('/dashboard', { replace: true });
+            break;
+          case 'admin':
+          default:
+            navigate('/dashboard', { replace: true });
+            break;
+        }
       } else {
         setLoginError(result?.error || 'Error en el login');
       }
-    } catch (error) {
-      console.error('Error en login:', error);
-      setLoginError(error.message || 'Error de conexión con el servidor');
+    } catch (err) {
+      setLoginError(err.message || 'Error de conexión con el servidor');
     }
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      display: 'flex', 
-      alignItems: 'center', 
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: '#f3f4f6',
       fontFamily: 'system-ui, -apple-system, sans-serif'
@@ -50,20 +75,20 @@ export function SimpleLogin() {
         width: '100%',
         maxWidth: '400px'
       }}>
-        <h1 style={{ 
-          textAlign: 'center', 
+        <h1 style={{
+          textAlign: 'center',
           marginBottom: '2rem',
           color: '#1f2937',
           fontSize: '1.5rem',
           fontWeight: 'bold'
         }}>
-          Sistema de Gestión Escolar v8.0
+          Sistema de Gestión Escolar v8.2
         </h1>
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '1rem' }}>
-            <label style={{ 
-              display: 'block', 
+            <label style={{
+              display: 'block',
               marginBottom: '0.5rem',
               color: '#374151',
               fontWeight: '500'
@@ -86,8 +111,8 @@ export function SimpleLogin() {
           </div>
 
           <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ 
-              display: 'block', 
+            <label style={{
+              display: 'block',
               marginBottom: '0.5rem',
               color: '#374151',
               fontWeight: '500'
@@ -160,4 +185,3 @@ export function SimpleLogin() {
 }
 
 export default SimpleLogin;
-

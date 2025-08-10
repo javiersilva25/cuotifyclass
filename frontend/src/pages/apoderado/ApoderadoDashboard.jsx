@@ -18,10 +18,11 @@ import { Badge } from '../../components/ui/badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useApoderadoData, usePayments } from '../../features/apoderado/hooks/useApoderado';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import  Navbar  from '../../pages/Navbar.jsx';
 
 export default function ApoderadoDashboard() {
   const { user, logout } = useAuth();
@@ -92,6 +93,9 @@ export default function ApoderadoDashboard() {
   }
 
   return (
+    <>
+    {/* Navbar global */}
+    <Navbar /> 
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50">
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
@@ -522,6 +526,7 @@ export default function ApoderadoDashboard() {
         </Tabs>
       </div>
     </div>
+    </>
   );
 }
 

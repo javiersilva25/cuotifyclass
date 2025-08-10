@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import apoderadoClient, { paymentsAPI } from '../../../api/apoderado';
-import { useAuth } from '../../../context/AuthContext';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 
 // Hook para autenticación de apoderados
 export const useApoderadoAuth = () => {

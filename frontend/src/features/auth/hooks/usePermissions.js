@@ -1,35 +1,51 @@
-// features/auth/hooks/usePermissions.js
+// features/auth/hooks/usePermissions.jsx
 import { useAuth } from './useAuth';
+
+const ROLES = {
+  ADMIN: 'Administrador',
+  DIRECTIVO: 'Directivo',
+  PROFESOR: 'Profesor',
+  APODERADO: 'Apoderado',
+  ALUMNO: 'Alumno',
+  TESORERO: 'Tesorero Alumnos',
+};
 
 export const usePermissions = () => {
   const auth = useAuth();
 
-  const is = (r) => auth.hasRole(r);             // 👈 delega al hook
-  const isAdmin = auth.isAdmin;
+  const is = (r) => auth.hasRole(r);
+  const isAdmin = is(ROLES.ADMIN);
 
   const hasPermission = (permission) => {
     if (!auth.isAuthenticated) return false;
     if (isAdmin) return true;
 
     switch (permission) {
-      case 'view_alumnos':            return is('administrador') || is('profesor') || is('tesorero');
-      case 'edit_alumnos':            return is('administrador') || is('profesor');
-      case 'view_cursos':             return is('administrador') || is('profesor') || is('tesorero');
-      case 'edit_cursos':             return is('administrador');
-      case 'view_cobros':             return is('administrador') || is('tesorero');
-      case 'edit_cobros':             return is('administrador') || is('tesorero');
-      case 'view_gastos':             return is('administrador') || is('tesorero');
-      case 'edit_gastos':             return is('administrador') || is('tesorero');
-      case 'view_categorias_gasto':   return is('administrador') || is('tesorero');
-      case 'edit_categorias_gasto':   return is('administrador');
-      case 'view_movimientos':        return is('administrador') || is('tesorero');
-      case 'edit_movimientos':        return is('administrador') || is('tesorero');
-      case 'view_deudas':             return is('administrador') || is('tesorero') || is('apoderado');
-      case 'edit_deudas':             return is('administrador') || is('tesorero');
-      case 'view_reportes':           return is('administrador') || is('tesorero') || is('apoderado');
-      case 'admin_panel':             return is('administrador');
-      case 'carga_masiva':            return is('administrador');
-      case 'gestion_usuarios':        return is('administrador');
+      case 'view_alumnos':            return is(ROLES.ADMIN) || is(ROLES.PROFESOR) || is(ROLES.TESORERO);
+      case 'edit_alumnos':            return is(ROLES.ADMIN) || is(ROLES.PROFESOR);
+
+      case 'view_cursos':             return is(ROLES.ADMIN) || is(ROLES.PROFESOR) || is(ROLES.DIRECTIVO);
+      case 'edit_cursos':             return is(ROLES.ADMIN) || is(ROLES.PROFESOR);
+
+      case 'view_cobros':             return is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO);
+      case 'edit_cobros':             return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+
+      case 'view_gastos':             return is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO);
+      case 'edit_gastos':             return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+
+      case 'view_categorias_gasto':   return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+      case 'edit_categorias_gasto':   return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+
+      case 'view_movimientos':        return is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO);
+      case 'edit_movimientos':        return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+
+      case 'view_deudas':             return is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO) || is(ROLES.APODERADO);
+      case 'edit_deudas':             return is(ROLES.ADMIN) || is(ROLES.TESORERO);
+
+      case 'view_reportes':           return is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO);
+      case 'admin_panel':             return is(ROLES.ADMIN);
+      case 'carga_masiva':            return is(ROLES.ADMIN);
+      case 'gestion_usuarios':        return is(ROLES.ADMIN);
       default: return false;
     }
   };
@@ -49,19 +65,24 @@ export const usePermissions = () => {
       case 'deudas-companero': return hasPermission('view_deudas');
       case 'admin/carga-masiva':     return hasPermission('carga_masiva');
       case 'admin/gestion-usuarios': return hasPermission('gestion_usuarios');
+
       case 'apoderado/dashboard':
       case 'apoderado/pagos':
-      case 'apoderado/historial':     return is('apoderado');
+      case 'apoderado/historial':     return is(ROLES.APODERADO);
+
       case 'tesorero/dashboard':
-      case 'tesorero/alumnos':        return is('tesorero');
+      case 'tesorero/alumnos':        return is(ROLES.TESORERO);
       default: return false;
     }
   };
 
-  // ... resto igual
   return {
+    // base
+    isAdmin,
     hasPermission,
     canAccessPage,
+
+    // acciones genéricas
     canPerformAction: (action, resource) => {
       if (!auth.isAuthenticated) return false;
       if (isAdmin) return true;
@@ -73,6 +94,8 @@ export const usePermissions = () => {
         default: return false;
       }
     },
+
+    // páginas accesibles
     getAccessiblePages: () => {
       if (!auth.isAuthenticated) return [];
       const pages = ['dashboard'];
@@ -85,20 +108,33 @@ export const usePermissions = () => {
       if (hasPermission('view_deudas')) pages.push('deudas-alumno','deudas-companero');
       if (hasPermission('carga_masiva')) pages.push('admin/carga-masiva');
       if (hasPermission('gestion_usuarios')) pages.push('admin/gestion-usuarios');
-      if (is('apoderado')) pages.push('apoderado/dashboard','apoderado/pagos','apoderado/historial');
-      if (is('tesorero'))  pages.push('tesorero/dashboard','tesorero/alumnos');
+      if (is(ROLES.APODERADO)) pages.push('apoderado/dashboard','apoderado/pagos','apoderado/historial');
+      if (is(ROLES.TESORERO))  pages.push('tesorero/dashboard','tesorero/alumnos');
       return pages;
     },
 
-    // shortcuts
+    // atajos usados en páginas
     canViewAlumnos: () => hasPermission('view_alumnos'),
     canEditAlumnos: () => hasPermission('edit_alumnos'),
-    canViewCobros:  () => hasPermission('view_cobros'),
-    canEditCobros:  () => hasPermission('edit_cobros'),
-    canViewGastos:  () => hasPermission('view_gastos'),
-    canEditGastos:  () => hasPermission('edit_gastos'),
-    canViewDeudas:  () => hasPermission('view_deudas'),
-    canEditDeudas:  () => hasPermission('edit_deudas'),
+
+    canViewCursos:   () => hasPermission('view_cursos'),
+    canEditCursos:   () => hasPermission('edit_cursos'),
+    canManageCursos: () => hasPermission('view_cursos'), // compatibilidad
+
+    canViewCobros:   () => hasPermission('view_cobros'),
+    canEditCobros:   () => hasPermission('edit_cobros'),
+
+    canViewGastos:   () => hasPermission('view_gastos'),
+    canEditGastos:   () => hasPermission('edit_gastos'),
+
+    canViewDeudas:   () => hasPermission('view_deudas'),
+    canEditDeudas:   () => hasPermission('edit_deudas'),
+
+    canManageFinanzas: () =>
+      is(ROLES.ADMIN) || is(ROLES.TESORERO) || is(ROLES.DIRECTIVO),
+
     canAccessAdmin: () => hasPermission('admin_panel'),
   };
 };
+
+export default usePermissions;

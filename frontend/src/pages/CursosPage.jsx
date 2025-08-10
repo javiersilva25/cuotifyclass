@@ -49,27 +49,20 @@ export function CursosPage() {
   if (!canManageCursos) {
     return (
       <>
-        <Navbar />
-
-        {!canManageCursos ? (
-          <div className="flex items-center justify-center min-h-[400px]">
-            <Card className="max-w-md">
-              <CardContent className="p-8 text-center">
-                <GraduationCap className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Acceso Restringido
-                </h3>
-                <p className="text-gray-600">
-                  No tienes permisos para gestionar cursos.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <div className="p-4 max-w-7xl mx-auto">
-            {/* Contenido visible si tiene acceso */}
-          </div>
-        )}
+        <Navbar />  {/* siempre visible */}
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Card className="max-w-md">
+            <CardContent className="p-8 text-center">
+              <GraduationCap className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Acceso Restringido
+              </h3>
+              <p className="text-gray-600">
+                No tienes permisos para gestionar cursos.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </>
     );
   }

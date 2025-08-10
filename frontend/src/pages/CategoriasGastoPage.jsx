@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Tag, Plus, DollarSign, TrendingUp, AlertTriangle, BarChart3, PieChart } from 'lucide-react';
+import { Tag, Plus, DollarSign, TrendingUp, AlertTriangle, BarChart3, PieChart, Users } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Progress } from '../components/ui/progress';

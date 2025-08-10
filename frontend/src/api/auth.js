@@ -1,219 +1,184 @@
+// src/api/auth.js
 import apiClient from './client.js';
-import { API_ENDPOINTS } from '../config/api.js';
-import { APP_CONFIG } from '../config/app.js';
+import { API_ENDPOINTS, AUTH_CONFIG } from '../config/api.js';
 import { mockAuthService } from '../features/auth/services/mockAuth.js';
 
-// Determinar si usar mock o API real
-const USE_MOCK = false; // Siempre usar API real para v8.6.00
+const USE_MOCK = false;
 
-// API de autenticación
 export const authApi = {
-  // Login
   async login(credentials) {
-    if (USE_MOCK) {
-      return mockAuthService.login(credentials);
-    }
-    
     try {
-      const response = await apiClient.post(API_ENDPOINTS.AUTH.LOGIN, credentials);
-      return response;
-    } catch (error) {
-      throw new Error(error.message || 'Error al iniciar sesión');
+      const resp = USE_MOCK
+        ? await mockAuthService.login(credentials)
+        : await apiClient.post(API_ENDPOINTS.AUTH.LOGIN, credentials);
+
+      const success = resp?.success ?? false;
+      const data = resp?.data ?? resp ?? {};
+      const token = data?.token;
+
+      if (success && token) {
+        localStorage.setItem(AUTH_CONFIG.TOKEN_KEY, token);
+      }
+      return { success, data };
+    } catch (e) {
+      throw new Error(e?.message || 'Error al iniciar sesión');
     }
   },
 
-  // Logout
   async logout() {
-    if (USE_MOCK) {
-      return mockAuthService.logout();
-    }
-    
     try {
-      const response = await apiClient.post(API_ENDPOINTS.AUTH.LOGOUT);
-      return response;
-    } catch (error) {
-      // No lanzar error en logout, solo loggear
-      console.warn('Error al cerrar sesión:', error);
-      return { success: true, message: 'Sesión cerrada localmente' };
+      if (USE_MOCK) {
+        await mockAuthService.logout();
+      } else {
+        await apiClient.post(API_ENDPOINTS.AUTH.LOGOUT);
+      }
+    } catch (_) {
+      // silencioso
+    } finally {
+      this.clearAuthData();
+      return { success: true, message: 'Sesión cerrada' };
     }
   },
 
-  // Obtener usuario actual
   async getCurrentUser() {
-    if (USE_MOCK) {
-      const token = localStorage.getItem(APP_CONFIG.AUTH.TOKEN_KEY);
-      if (!token) {
-        throw new Error('No hay token de autenticación');
-      }
-      return mockAuthService.me(token);
-    }
-    
     try {
-      const response = await apiClient.get(API_ENDPOINTS.AUTH.ME);
-      return response;
-    } catch (error) {
-      throw new Error(error.message || 'Error al obtener usuario');
+      const resp = USE_MOCK
+        ? await mockAuthService.me(localStorage.getItem(AUTH_CONFIG.TOKEN_KEY))
+        : await apiClient.get(API_ENDPOINTS.AUTH.ME);
+
+      const success = resp?.success ?? true;
+      const data = resp?.data ?? resp ?? {};
+      return { success, data };
+    } catch (e) {
+      throw new Error(e?.message || 'Error al obtener usuario');
     }
   },
 
-  // Refrescar token
   async refreshToken() {
-    if (USE_MOCK) {
-      const token = localStorage.getItem(APP_CONFIG.AUTH.TOKEN_KEY);
-      if (!token) {
-        throw new Error('No hay token para refrescar');
-      }
-      return mockAuthService.refreshToken(token);
-    }
-    
     try {
-      const response = await apiClient.post(API_ENDPOINTS.AUTH.REFRESH);
-      return response;
-    } catch (error) {
-      throw new Error(error.message || 'Error al refrescar token');
+      const resp = USE_MOCK
+        ? await mockAuthService.refreshToken(localStorage.getItem(AUTH_CONFIG.TOKEN_KEY))
+        : await apiClient.post(API_ENDPOINTS.AUTH.REFRESH);
+
+      const success = resp?.success ?? false;
+      const data = resp?.data ?? resp ?? {};
+      const newToken = data?.token;
+
+      if (success && newToken) {
+        localStorage.setItem(AUTH_CONFIG.TOKEN_KEY, newToken);
+      }
+      return { success, data };
+    } catch (e) {
+      throw new Error(e?.message || 'Error al refrescar token');
     }
   },
 
-  // Actualizar perfil
   async updateProfile(profileData) {
-    if (USE_MOCK) {
-      const token = localStorage.getItem(APP_CONFIG.AUTH.TOKEN_KEY);
-      if (!token) {
-        throw new Error('No hay token de autenticación');
-      }
-      return mockAuthService.updateProfile(token, profileData);
-    }
-    
     try {
-      const response = await apiClient.put(API_ENDPOINTS.AUTH.ME, profileData);
-      return response;
-    } catch (error) {
-      throw new Error(error.message || 'Error al actualizar perfil');
+      const resp = USE_MOCK
+        ? await mockAuthService.updateProfile(localStorage.getItem(AUTH_CONFIG.TOKEN_KEY), profileData)
+        : await apiClient.put(API_ENDPOINTS.AUTH.ME, profileData);
+
+      const success = resp?.success ?? true;
+      const data = resp?.data ?? resp ?? {};
+      return { success, data };
+    } catch (e) {
+      throw new Error(e?.message || 'Error al actualizar perfil');
     }
   },
 
-  // Cambiar contraseña
   async changePassword(passwordData) {
-    if (USE_MOCK) {
-      const token = localStorage.getItem(APP_CONFIG.AUTH.TOKEN_KEY);
-      if (!token) {
-        throw new Error('No hay token de autenticación');
-      }
-      return mockAuthService.changePassword(token, passwordData);
-    }
-    
     try {
-      const response = await apiClient.post('/auth/change-password', passwordData);
-      return response;
-    } catch (error) {
-      throw new Error(error.message || 'Error al cambiar contraseña');
+      const resp = USE_MOCK
+        ? await mockAuthService.changePassword(localStorage.getItem(AUTH_CONFIG.TOKEN_KEY), passwordData)
+        : await apiClient.post(API_ENDPOINTS.AUTH.CHANGE_PASSWORD, passwordData);
+
+      const success = resp?.success ?? true;
+      const data = resp?.data ?? resp ?? {};
+      return { success, data };
+    } catch (e) {
+      throw new Error(e?.message || 'Error al cambiar contraseña');
     }
   },
 
-  // Verificar salud del servicio
   async healthCheck() {
-    if (USE_MOCK) {
-      return mockAuthService.healthCheck();
-    }
-    
     try {
-      const response = await apiClient.get('/health');
-      return response;
-    } catch (error) {
-      return { success: false, error: error.message };
+      const resp = USE_MOCK ? await mockAuthService.healthCheck() : await apiClient.get('/health');
+      return resp ?? { success: true };
+    } catch (e) {
+      return { success: false, error: e?.message || 'Health check fallido' };
     }
   },
 
-  // Validar token localmente
+  // --- helpers token (tolerante a token no-JWT/mock) ---
   validateToken(token) {
     if (!token) return false;
-    
+    const parts = token.split('.');
+    if (parts.length !== 3) return true; // token mock
     try {
-      const parts = token.split('.');
-      if (parts.length !== 3) return false;
-      
       const payload = JSON.parse(atob(parts[1]));
       const now = Math.floor(Date.now() / 1000);
-      
-      return payload.exp > now;
+      return payload?.exp > now;
     } catch {
-      return false;
+      return true;
     }
   },
 
-  // Obtener información del token
   getTokenInfo(token) {
     if (!token) return null;
-    
+    const parts = token.split('.');
+    if (parts.length !== 3) return { isMock: true };
     try {
-      const parts = token.split('.');
-      if (parts.length !== 3) return null;
-      
       const payload = JSON.parse(atob(parts[1]));
       return {
-        userId: payload.sub,
-        email: payload.email,
-        role: payload.role,
-        issuedAt: new Date(payload.iat * 1000),
-        expiresAt: new Date(payload.exp * 1000),
-        isExpired: payload.exp < Math.floor(Date.now() / 1000),
+        userId: payload?.sub,
+        role: payload?.role,
+        issuedAt: payload?.iat ? new Date(payload.iat * 1000) : null,
+        expiresAt: payload?.exp ? new Date(payload.exp * 1000) : null,
+        isExpired: payload?.exp ? payload.exp < Math.floor(Date.now() / 1000) : false,
       };
     } catch {
-      return null;
+      return { isMock: true };
     }
   },
 
-  // Verificar si el token expira pronto
   isTokenExpiringSoon(token, bufferMinutes = 5) {
-    const tokenInfo = this.getTokenInfo(token);
-    if (!tokenInfo) return true;
-    
-    const bufferMs = bufferMinutes * 60 * 1000;
-    const expiryTime = tokenInfo.expiresAt.getTime();
-    const currentTime = Date.now();
-    
-    return (expiryTime - currentTime) <= bufferMs;
+    const info = this.getTokenInfo(token);
+    if (!info || info.isMock || !info.expiresAt) return false;
+    return info.expiresAt.getTime() - Date.now() <= bufferMinutes * 60 * 1000;
   },
 
-  // Limpiar datos de autenticación
   clearAuthData() {
-    localStorage.removeItem(APP_CONFIG.AUTH.TOKEN_KEY);
-    localStorage.removeItem(APP_CONFIG.AUTH.USER_KEY);
-    localStorage.removeItem(APP_CONFIG.AUTH.REFRESH_TOKEN_KEY);
-    apiClient.setToken(null);
+    localStorage.removeItem(AUTH_CONFIG.TOKEN_KEY);
+    localStorage.removeItem(AUTH_CONFIG.USER_KEY);
+    localStorage.removeItem(AUTH_CONFIG.REFRESH_TOKEN_KEY);
   },
 
-  // Configurar interceptores para manejo automático de tokens
+  // Interceptor: adjunta Authorization en cada request
   setupInterceptors() {
-    // Interceptor para agregar token automáticamente
-    const originalRequest = apiClient.request.bind(apiClient);
-    
-    apiClient.request = async function(endpoint, options = {}) {
-      const token = localStorage.getItem(APP_CONFIG.AUTH.TOKEN_KEY);
-      
-      if (token && authApi.validateToken(token)) {
-        // Si el token expira pronto, intentar refrescarlo
-        if (authApi.isTokenExpiringSoon(token)) {
+    const originalRequest = apiClient.request?.bind(apiClient);
+    if (!originalRequest) return; // si no existe, no parcheamos
+
+    apiClient.request = async (endpoint, options = {}) => {
+      const token = localStorage.getItem(AUTH_CONFIG.TOKEN_KEY);
+      const headers = { ...(options.headers || {}) };
+
+      if (token) {
+        // Refresco opcional para JWT reales
+        if (this.validateToken(token) && this.isTokenExpiringSoon(token)) {
           try {
-            const refreshResult = await authApi.refreshToken();
-            if (refreshResult.success) {
-              const newToken = refreshResult.data.token;
-              localStorage.setItem(APP_CONFIG.AUTH.TOKEN_KEY, newToken);
-              apiClient.setToken(newToken);
-            }
-          } catch (error) {
-            console.warn('Error al refrescar token:', error);
-          }
+            await this.refreshToken();
+          } catch {}
         }
+        headers.Authorization = `Bearer ${localStorage.getItem(AUTH_CONFIG.TOKEN_KEY) || token}`;
       }
-      
-      return originalRequest(endpoint, options);
+
+      return originalRequest(endpoint, { ...options, headers });
     };
   },
 };
 
-// Configurar interceptores al importar
+// configurar interceptores
 authApi.setupInterceptors();
 
 export default authApi;
-

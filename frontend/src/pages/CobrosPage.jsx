@@ -30,7 +30,7 @@ import {
 import { usePermissions } from "../features/auth/hooks/usePermissions";
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
-import  Navbar  from '../pages/Navbar.jsx';
+import  Navbar  from '../pages/Navbar';
 
 export function CobrosPage() {
   const { canManageFinanzas } = usePermissions();
@@ -69,6 +69,8 @@ export function CobrosPage() {
   // Verificar permisos
   if (!canManageFinanzas) {
     return (
+      <>
+              <Navbar />
       <div className="flex items-center justify-center min-h-[400px]">
         <Card className="max-w-md">
           <CardContent className="p-8 text-center">
@@ -82,6 +84,7 @@ export function CobrosPage() {
           </CardContent>
         </Card>
       </div>
+      </>
     );
   }
 

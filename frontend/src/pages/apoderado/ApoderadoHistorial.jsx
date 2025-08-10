@@ -25,6 +25,7 @@ import { useApoderadoData } from '../../features/apoderado/hooks/useApoderado';
 import { useNavigate } from 'react-router-dom';
 import { format, startOfYear, endOfYear, startOfMonth, endOfMonth } from 'date-fns';
 import { es } from 'date-fns/locale';
+import  Navbar  from '../../pages/Navbar.jsx';
 
 export default function ApoderadoHistorial() {
   const navigate = useNavigate();

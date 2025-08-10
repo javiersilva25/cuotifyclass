@@ -16,6 +16,7 @@ import {
 import { useTesoreroActual, useResumenCursoTesorero, useEstadisticasFinancierasCurso } from '../../features/tesorero/hooks/useTesorero';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { Link } from 'react-router-dom';
+import  Navbar  from '../../pages/Navbar.jsx';
 
 const TesoreroDashboard = () => {
   const { tesorero, loading: loadingTesorero } = useTesoreroActual();
@@ -35,6 +36,9 @@ const TesoreroDashboard = () => {
 
   if (!tesorero || !tesorero.curso) {
     return (
+      <>
+          {/* Navbar global */}
+          <Navbar /> 
       <div className="flex items-center justify-center min-h-screen">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
@@ -46,6 +50,7 @@ const TesoreroDashboard = () => {
           </CardHeader>
         </Card>
       </div>
+      </>
     );
   }
 
