@@ -30,13 +30,21 @@ const authGuard = (req, res, next) => {
   }
 };
 
-const normalizeRut = (rut) => String(rut || '').replace(/\./g, '').trim();
-const isBcryptHash = (h) => typeof h === 'string' && /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(h);
+// Normaliza RUT: quita puntos y guión, DV en mayúscula
+const normalizeRut = (rut) =>
+  String(rut || '')
+    .replace(/\./g, '')
+    .replace(/-/g, '')
+    .trim()
+    .toUpperCase();
+
+const isBcryptHash = (h) =>
+  typeof h === 'string' && /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(h);
 
 const shapeUser = (p, rolesRows) => ({
   rut: p?.rut || null,
-  nombres: p?.nombres || null,       // quedará null si la columna no existe
-  apellidos: p?.apellidos || null,   // idem
+  nombres: p?.nombres || null,
+  apellidos: p?.apellidos || null,
   email: p?.email || null,
   persona_roles: (rolesRows || []).map(r => ({
     rol_id: r.rol_id,
@@ -55,7 +63,7 @@ router.post('/login', async (req, res) => {
 
     const rutIn = normalizeRut(rut);
 
-    // Solo usuarios_auth (sin JOIN susceptibles a columnas)
+    // Busca sólo en usuarios_auth con comparación normalizada (sin puntos ni guión)
     const [rows] = await sequelize.query(
       `
       SELECT 
@@ -65,7 +73,7 @@ router.post('/login', async (req, res) => {
         ua.bloqueado_hasta,
         ua.debe_cambiar_password
       FROM usuarios_auth ua
-      WHERE REPLACE(ua.rut_persona, '.', '') = REPLACE(:rutIn, '.', '')
+      WHERE REPLACE(REPLACE(UPPER(ua.rut_persona), '.', ''), '-', '') = :rutIn
       LIMIT 1
       `,
       { replacements: { rutIn } }
@@ -82,7 +90,7 @@ router.post('/login', async (req, res) => {
     if (isBcryptHash(ua.password_hash)) {
       try { ok = await bcrypt.compare(password, ua.password_hash); } catch { ok = false; }
     } else {
-      ok = ua.password_hash === password; // fallback DEV
+      ok = ua.password_hash === password; // sólo para DEV
     }
     if (!ok) return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
 
@@ -104,21 +112,20 @@ router.post('/login', async (req, res) => {
 router.get('/me', authGuard, async (req, res) => {
   try {
     const rut_persona = req.rut_persona;
+    const rutClean = normalizeRut(rut_persona);
 
-    // Selección mínima y segura de PERSONAS (evita columnas inexistentes)
+    // Si no hay fila en personas, devolvemos al menos el RUT original
     const [persRows] = await sequelize.query(
       `
       SELECT p.rut, p.email
       FROM personas p
-      WHERE p.rut = :rut_persona
+      WHERE REPLACE(REPLACE(UPPER(p.rut), '.', ''), '-', '') = :rutClean
       LIMIT 1
       `,
-      { replacements: { rut_persona } }
+      { replacements: { rutClean } }
     );
-    // Si no hay fila en personas, igual construimos con el RUT
     const p = persRows?.[0] || { rut: rut_persona, email: null };
 
-    // Roles activos y vigentes desde PERSONA_ROLES
     const [rolesRows] = await sequelize.query(
       `
       SELECT 
@@ -127,12 +134,12 @@ router.get('/me', authGuard, async (req, res) => {
         pr.curso_id
       FROM persona_roles pr
       LEFT JOIN roles r ON r.id = pr.rol_id
-      WHERE pr.rut_persona = :rut_persona
+      WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') = :rutClean
         AND pr.activo = 1
         AND (pr.fecha_inicio IS NULL OR pr.fecha_inicio <= CURDATE())
         AND (pr.fecha_fin IS NULL OR pr.fecha_fin >= CURDATE())
       `,
-      { replacements: { rut_persona } }
+      { replacements: { rutClean } }
     );
 
     const user = shapeUser(p, rolesRows || []);
