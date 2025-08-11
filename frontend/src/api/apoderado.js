@@ -1,7 +1,7 @@
 import apiClient from './client';
 
 // URL base del backend v4.1.0
-const API_BASE_URL = 'https://3000-i2rtjntwdxcsspj1a79oy-71f64272.manusvm.computer';
+const API_BASE_URL = 'http://localhost:3000';
 
 // Cliente API específico para apoderados
 const apoderadoClient = {

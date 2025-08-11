@@ -108,6 +108,109 @@ router.post('/login', async (req, res) => {
   }
 });
 
+/* ========== REGISTER (rut + password) con persona + rol APODERADO ========== */
+// /api/auth/register para tu esquema real
+router.post('/register', async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { rut, password } = req.body || {};
+    if (!rut || !password) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: 'RUT y contraseña requeridos' });
+    }
+
+    const rutN = normalizeRut(rut);
+    const rutFmt = (() => {
+      const body = rutN.slice(0, -1), dv = rutN.slice(-1);
+      return body.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
+    })();
+
+    // 1) Ya existe en usuarios_auth?
+    const [[ua]] = await sequelize.query(
+      `SELECT 1 FROM usuarios_auth 
+       WHERE REPLACE(REPLACE(UPPER(rut_persona),'.',''),'-','') = :rutN LIMIT 1`,
+      { replacements: { rutN }, transaction: t }
+    );
+    if (ua) { await t.rollback(); return res.status(409).json({ success:false, message:'RUT ya registrado' }); }
+
+    // 2) Insert credenciales (usuarios_auth)
+    const hash = await bcrypt.hash(password, 12);
+    await sequelize.query(
+      `INSERT INTO usuarios_auth
+        (rut_persona, password_hash, ultimo_acceso, intentos_fallidos, debe_cambiar_password, created_at)
+       VALUES
+        (:rut, :hash, NULL, 0, 0, NOW())`,
+      { replacements: { rut: rutN, hash }, transaction: t }
+    );
+
+    // 3) Asegurar persona (personas) con campos NOT NULL
+    const [[pers]] = await sequelize.query(
+      `SELECT 1 FROM personas 
+       WHERE REPLACE(REPLACE(UPPER(rut),'.',''),'-','') = :rutN LIMIT 1`,
+      { replacements: { rutN }, transaction: t }
+    );
+    if (!pers) {
+      // placeholders válidos a tu esquema
+      const nombres = 'Usuario';
+      const apellido_paterno = 'SinApellido';
+      const fecha_nacimiento = '2000-01-01';
+      const genero = 'O';
+      const email = `${rutN}@auto.local`;  // único por RUT
+
+      await sequelize.query(
+        `INSERT INTO personas
+          (rut, rut_formateado, nombres, apellido_paterno, apellido_materno,
+           fecha_nacimiento, genero, email, telefono, direccion,
+           codigo_comuna, codigo_provincia, codigo_region,
+           activo, es_dato_prueba, created_at)
+         VALUES
+          (:rut, :rutFmt, :nombres, :apPat, NULL,
+           :fecNac, :genero, :email, NULL, NULL,
+           NULL, NULL, NULL,
+           1, 0, NOW())`,
+        { replacements: {
+            rut: rutN, rutFmt, nombres,
+            apPat: apellido_paterno, fecNac: fecha_nacimiento,
+            genero, email
+          }, transaction: t }
+      );
+    }
+
+    // 4) Asignar rol APODERADO (si existe) en persona_roles
+    const [[rol]] = await sequelize.query(
+      `SELECT id FROM roles WHERE UPPER(nombre_rol) = 'APODERADO' LIMIT 1`,
+      { transaction: t }
+    );
+    if (rol?.id) {
+      const [[ya]] = await sequelize.query(
+        `SELECT 1 FROM persona_roles
+         WHERE rut = :rut AND rol_id = :rol LIMIT 1`,
+        { replacements: { rut: rutN, rol: rol.id }, transaction: t }
+      );
+      if (!ya) {
+        await sequelize.query(
+          `INSERT INTO persona_roles
+            (rut_persona, rut, rol_id, curso_id, fecha_inicio, fecha_fin,
+             activo, es_dato_prueba, created_at)
+           VALUES
+            (:rut, :rut, :rol, NULL, CURDATE(), NULL,
+             1, 0, NOW())`,
+          { replacements: { rut: rutN, rol: rol.id }, transaction: t }
+        );
+      }
+    }
+
+    await t.commit();
+    return res.status(201).json({ success: true, data: { token: signToken(rutN) } });
+  } catch (e) {
+    await t.rollback();
+    console.error('AUTH /register error:', e?.message || e);
+    return res.status(500).json({ success: false, message: 'Error en registro' });
+  }
+});
+
+
+
 /* ========== ME ========== */
 router.get('/me', authGuard, async (req, res) => {
   try {

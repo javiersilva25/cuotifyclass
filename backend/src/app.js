@@ -96,6 +96,7 @@ app.get('/', (req, res) => {
 // Configurar rutas de la API
 app.use('/api', routes);
 
+
 // Middleware para rutas no encontradas
 app.use(notFoundHandler);
 

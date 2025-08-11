@@ -40,6 +40,7 @@ import { Checkbox } from '../../components/ui/checkbox';
 import { useAuth } from '../../features/auth/hooks/useAuth';
 import { validarRut, formatearRut, limpiarRut } from '../../utils/rutValidator';
 import { API_ENDPOINTS, buildUrl, getAuthHeaders } from '../../config/api';
+import  Navbar  from '../../pages/Navbar.jsx';
 
 const GestionUsuarios = () => {
   const { user, isAdmin } = useAuth();
@@ -97,30 +98,33 @@ const GestionUsuarios = () => {
           search: busqueda,
           rol: filtroRol !== 'todos' ? filtroRol : undefined,
           estado: filtroEstado !== 'todos' ? filtroEstado : undefined
-        }), {
-          headers: getAuthHeaders()
-        }),
-        fetch(buildUrl(API_ENDPOINTS.ROLES.BASE), {
-          headers: getAuthHeaders()
-        })
+        }), { headers: getAuthHeaders() }),
+        fetch(buildUrl(API_ENDPOINTS.ROLES.BASE), { headers: getAuthHeaders() })
       ]);
 
-      if (personasResponse.ok && rolesResponse.ok) {
-        const personasData = await personasResponse.json();
-        const rolesData = await rolesResponse.json();
-        
-        setPersonas(personasData.data || []);
-        setTotalPaginas(personasData.totalPages || 1);
-        setRoles(rolesData.data || []);
-      } else {
-        throw new Error('Error cargando datos');
-      }
+      if (!personasResponse.ok || !rolesResponse.ok) throw new Error('Error cargando datos');
+
+      const personasJson = await personasResponse.json();
+      const rolesJson    = await rolesResponse.json();
+
+      const items = personasJson?.data?.items || [];
+      setPersonas(items);
+      setTotalPaginas(personasJson?.data?.pages || 1);
+
+      const rolesItems = rolesJson?.data?.items || [];
+      // normaliza a {id, nombre, codigo}
+      setRoles(rolesItems.map(r => ({
+        id: r.id,
+        nombre: r.nombre_rol,
+        codigo: String(r.nombre_rol || '').toLowerCase()
+      })));
     } catch (err) {
-      setError('Error cargando datos: ' + err.message);
+      setError('Error cargando datos: ' + (err.message || ''));
     } finally {
       setLoading(false);
     }
   };
+
 
   // Manejar cambios en el formulario
   const handleFormChange = (campo, valor) => {
@@ -288,14 +292,16 @@ const GestionUsuarios = () => {
   };
 
   // Filtrar personas
-  const personasFiltradas = personas.filter(persona => {
-    const coincideBusqueda = !busqueda || 
-      persona.nombres?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      persona.apellidoPaterno?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      persona.apellidoMaterno?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      persona.rut?.includes(busqueda) ||
-      persona.email?.toLowerCase().includes(busqueda.toLowerCase());
-    
+  const base = Array.isArray(personas) ? personas : [];
+  const personasFiltradas = base.filter(persona => {
+    const nombre = persona.nombre_completo
+      || `${persona.nombres || ''} ${persona.apellidoPaterno || persona.apellido_paterno || ''} ${persona.apellidoMaterno || persona.apellido_materno || ''}`.trim();
+
+    const coincideBusqueda = !busqueda ||
+      nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+      (persona.rut || '').includes(busqueda) ||
+      (persona.email || '').toLowerCase().includes(busqueda.toLowerCase());
+
     return coincideBusqueda;
   });
 
@@ -325,7 +331,9 @@ const GestionUsuarios = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <>
+          <Navbar /> {/* ✅ Sección navbar agregada */}
+    <div className="space-y-6 p-4 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -433,7 +441,7 @@ const GestionUsuarios = () => {
                     <TableCell>
                       <div>
                         <div className="font-medium">
-                          {persona.nombres} {persona.apellidoPaterno} {persona.apellidoMaterno}
+                          {persona.nombre_completo || `${persona.nombres} ${persona.apellidoPaterno} ${persona.apellidoMaterno}`}
                         </div>
                         {persona.telefono && (
                           <div className="text-sm text-gray-500 flex items-center">
@@ -451,12 +459,13 @@ const GestionUsuarios = () => {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {persona.roles?.map((rol) => (
-                          <Badge 
-                            key={rol.id} 
-                            variant="secondary"
-                            className={getColorRol(rol.nombre)}
-                          >
+                        {(Array.isArray(persona.roles)
+                          ? persona.roles
+                          : typeof persona.roles === 'string'
+                            ? persona.roles.split(',').map(n => ({ id: n.trim(), nombre: n.trim() }))
+                            : []
+                        ).map((rol) => (
+                          <Badge key={rol.id} variant="secondary" className={getColorRol(rol.nombre)}>
                             {rol.nombre}
                           </Badge>
                         ))}
@@ -642,6 +651,7 @@ const GestionUsuarios = () => {
         </Alert>
       )}
     </div>
+    </>
   );
 };
 

@@ -33,8 +33,8 @@ export const API_ENDPOINTS = {
     REFRESH: '/api/auth/refresh',
     VERIFY: '/api/auth/verify',
     CHANGE_PASSWORD: '/api/auth/change-password',
+    REGISTER: '/api/auth/register', // <-- agregar
   },
-  
   // Geografía CUT 2018 (NUEVO v8.0)
   GEOGRAFIA: {
     REGIONES: '/api/geografia/regiones',

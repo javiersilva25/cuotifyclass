@@ -9,6 +9,8 @@ const tesoreroRoutes = require('./tesoreroRoutes');
 const unifiedPaymentRoutes = require('./unifiedPaymentRoutes');
 const webhookRoutes = require('./webhookRoutes');
 const cargaMasivaRoutes = require('./cargaMasivaRoutes');
+const personasRoutes = require('./personasRoutes');
+const roleRoutes = require('./roleRoutes');     
 
 // Configurar rutas
 router.use('/auth', authRoutes);
@@ -18,6 +20,8 @@ router.use('/tesoreros', tesoreroRoutes);
 router.use('/payments', unifiedPaymentRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/carga-masiva', cargaMasivaRoutes);
+router.use('/personas', personasRoutes);
+router.use('/roles', roleRoutes);  
 
 // Ruta de información del API
 router.get('/info', (req, res) => {
@@ -169,6 +173,7 @@ router.get('/info', (req, res) => {
     }
   });
 });
+
 
 // Ruta de salud del sistema
 router.get('/health', (req, res) => {
