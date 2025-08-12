@@ -11,7 +11,6 @@ router.get('/:id', AlumnoController.getById);
 router.put('/:id', AlumnoController.update);
 router.delete('/:id', AlumnoController.delete);
 router.patch('/:id/restore', AlumnoController.restore);
-
 // Rutas específicas
 router.get('/curso/:cursoId', AlumnoController.getByCurso);
 router.get('/apoderado/:apoderadoId', AlumnoController.getByApoderado);

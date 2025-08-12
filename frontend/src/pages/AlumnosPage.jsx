@@ -1,23 +1,20 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Users, UserPlus, GraduationCap } from 'lucide-react';
+import { UserPlus, GraduationCap } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { StatsGrid } from '../features/dashboard/components/StatsCard.jsx';
 import { AlumnosTable } from '../features/alumnos/components/AlumnosTable.jsx';
 import { AlumnoForm } from '../features/alumnos/components/AlumnoForm.jsx';
-import { usePermissions } from '../features/auth/hooks/usePermissions';
 import {
   useAlumnos,
   useAlumnosFilter,
   useAlumnosStats,
   useAlumnoValidation
 } from '../features/alumnos/hooks/useAlumnos.js';
-import  Navbar  from '../pages/Navbar.jsx';
-import { toast } from 'sonner';
+import Navbar from '../pages/Navbar.jsx';
 
 export function AlumnosPage() {
-  const { canManageAlumnos } = usePermissions();
   const { validateAlumnoForm } = useAlumnoValidation();
 
   const [showForm, setShowForm] = useState(false);
@@ -42,27 +39,6 @@ export function AlumnosPage() {
   } = useAlumnosFilter(alumnos);
 
   const stats = useAlumnosStats(alumnos);
-
-  if (!canManageAlumnos) {
-    return (
-      <>
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[400px] p-4">
-          <Card className="max-w-md w-full">
-            <CardContent className="p-8 text-center">
-              <Users className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Acceso Restringido
-              </h3>
-              <p className="text-gray-600">
-                No tienes permisos para gestionar alumnos.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </>
-    );
-  }
 
   const statsData = [
     {
@@ -149,7 +125,7 @@ export function AlumnosPage() {
 
   return (
     <>
-      <Navbar /> {/* ✅ Sección navbar agregada */}
+      <Navbar />
 
       <motion.div
         variants={pageVariants}
