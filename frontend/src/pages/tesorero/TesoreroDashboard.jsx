@@ -1,29 +1,48 @@
-import React from 'react';
+// src/pages/tesorero/tesorerodashboard.jsx
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Separator } from '../../components/ui/separator';
-import { 
-  Users, 
-  DollarSign, 
-  AlertCircle, 
-  TrendingUp,
-  Calendar,
-  BookOpen,
-  CreditCard,
-  FileText
-} from 'lucide-react';
-import { useTesoreroActual, useResumenCursoTesorero, useEstadisticasFinancierasCurso } from '../../features/tesorero/hooks/useTesorero';
+import { Users, DollarSign, AlertCircle, TrendingUp, BookOpen, CreditCard, FileText } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { Link } from 'react-router-dom';
-import  Navbar  from '../../pages/Navbar.jsx';
+import Navbar from '../../pages/Navbar.jsx';
+import tesoreroAPI from '../../api/tesorero';
 
 const TesoreroDashboard = () => {
-  const { tesorero, loading: loadingTesorero } = useTesoreroActual();
-  const { resumen, loading: loadingResumen } = useResumenCursoTesorero();
-  const { estadisticas, loading: loadingEstadisticas } = useEstadisticasFinancierasCurso();
+  const [loading, setLoading] = useState(true);
+  const [tesorero, setTesorero] = useState(null);
+  const [resumen, setResumen] = useState(null);
+  const [estadisticas, setEstadisticas] = useState(null);
 
-  if (loadingTesorero || loadingResumen || loadingEstadisticas) {
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const tes = await tesoreroAPI.getMyData(); // ahora devuelve el objeto directo
+        if (!mounted) return;
+        setTesorero(tes || null);
+
+        if (tes?.curso?.id) {
+          const [r1, r2] = await Promise.all([
+            tesoreroAPI.getResumenCurso(),               // -> { data: {...} }
+            tesoreroAPI.getEstadisticasFinancierasCurso()// -> { data: {...} }
+          ]);
+          if (!mounted) return;
+          setResumen(r1?.data || null);
+          setEstadisticas(r2?.data || null);
+        }
+      } catch {
+        setTesorero(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -34,28 +53,27 @@ const TesoreroDashboard = () => {
     );
   }
 
-  if (!tesorero || !tesorero.curso) {
+  if (!tesorero?.curso?.id) {
     return (
       <>
-          {/* Navbar global */}
-          <Navbar /> 
-      <div className="flex items-center justify-center min-h-screen">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
-            <CardTitle>Sin Curso Asignado</CardTitle>
-            <CardDescription>
-              No tienes un curso asignado como tesorero. Contacta al administrador para obtener acceso.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
+        <Navbar />
+        <div className="flex items-center justify-center min-h-screen">
+          <Card className="w-full max-w-md">
+            <CardHeader className="text-center">
+              <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
+              <CardTitle>Sin Curso Asignado</CardTitle>
+              <CardDescription>
+                No tienes un curso asignado como tesorero. Contacta al administrador para obtener acceso.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
       </>
     );
   }
 
   const curso = tesorero.curso;
-  const usuario = tesorero.usuario;
+  const usuario = tesorero.persona || tesorero.usuario || {};
 
   return (
     <div className="space-y-6">
@@ -72,9 +90,7 @@ const TesoreroDashboard = () => {
             <BookOpen className="h-4 w-4" />
             <span>{curso.nombre_curso}</span>
           </Badge>
-          <Badge variant="outline">
-            Año {curso.ano_escolar}
-          </Badge>
+          <Badge variant="outline">Año {curso.ano_escolar}</Badge>
         </div>
       </div>
 
@@ -90,11 +106,11 @@ const TesoreroDashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Nombre</p>
-              <p className="text-lg font-semibold">{usuario.nombre} {usuario.apellido}</p>
+              <p className="text-lg font-semibold">{[usuario.nombres, usuario.apellidos].filter(Boolean).join(' ')}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Email</p>
-              <p className="text-lg">{usuario.email}</p>
+              <p className="text-lg">{usuario.email || '—'}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Fecha de Asignación</p>
@@ -113,9 +129,7 @@ const TesoreroDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{resumen?.total_alumnos || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              Alumnos en el curso
-            </p>
+            <p className="text-xs text-muted-foreground">Alumnos en el curso</p>
           </CardContent>
         </Card>
 
@@ -160,9 +174,7 @@ const TesoreroDashboard = () => {
                 ? Math.round((estadisticas.total_recaudado / (estadisticas.total_recaudado + estadisticas.total_pendiente)) * 100)
                 : 0}%
             </div>
-            <p className="text-xs text-muted-foreground">
-              Porcentaje de cobro
-            </p>
+            <p className="text-xs text-muted-foreground">Porcentaje de cobro</p>
           </CardContent>
         </Card>
       </div>
@@ -171,9 +183,7 @@ const TesoreroDashboard = () => {
       <Card>
         <CardHeader>
           <CardTitle>Acciones Rápidas</CardTitle>
-          <CardDescription>
-            Gestiona las finanzas de tu curso de manera eficiente
-          </CardDescription>
+          <CardDescription>Gestiona las finanzas de tu curso de manera eficiente</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -270,34 +280,15 @@ const TesoreroDashboard = () => {
               <div className="flex justify-between items-center">
                 <span className="text-sm font-medium">Total Esperado:</span>
                 <span className="text-lg font-bold">
-                  {formatCurrency(estadisticas.total_recaudado + estadisticas.total_pendiente)}
+                  {formatCurrency((estadisticas.total_recaudado || 0) + (estadisticas.total_pendiente || 0))}
                 </span>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
-
-      {/* Nota Informativa */}
-      <Card className="border-blue-200 bg-blue-50">
-        <CardContent className="pt-6">
-          <div className="flex items-start space-x-3">
-            <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-blue-900">
-                Acceso Restringido
-              </p>
-              <p className="text-sm text-blue-700 mt-1">
-                Como tesorero, solo puedes ver y gestionar información financiera del curso <strong>{curso.nombre_curso}</strong>. 
-                Para acceder a otros cursos, contacta al administrador del sistema.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };
 
 export default TesoreroDashboard;
-

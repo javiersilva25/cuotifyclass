@@ -167,35 +167,31 @@ export const useTesoreroActual = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Obtener datos del tesorero actual
+  const esTesorero = Array.isArray(user?.roles)
+    ? user.roles.includes('tesorero') || user.roles.includes('admin')
+    : (user?.role === 'tesorero' || user?.role === 'admin');
+
   const fetchMyData = useCallback(async () => {
-    if (!user || user.role !== 'tesorero') {
-      return;
-    }
+    if (!esTesorero) return;
 
     setLoading(true);
     setError(null);
-    
     try {
-      const response = await tesoreroAPI.getMyData();
-      setTesorero(response.data);
+      const data = await tesoreroAPI.getMyData(); // ← ya retorna el objeto { rut_persona, curso, ... }
+      setTesorero(data || null);
     } catch (err) {
-      setError(err.response?.data?.message || 'Error al cargar datos del tesorero');
+      setError(err?.response?.data?.message || 'Error al cargar datos del tesorero');
+      setTesorero(null);
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [esTesorero]);
 
   useEffect(() => {
     fetchMyData();
   }, [fetchMyData]);
 
-  return {
-    tesorero,
-    loading,
-    error,
-    refetch: fetchMyData
-  };
+  return { tesorero, loading, error, refetch: fetchMyData };
 };
 
 // Hook para resumen del curso del tesorero
