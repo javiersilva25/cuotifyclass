@@ -1,420 +1,325 @@
+// src/features/cobros/hooks/useCobros.js
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
+import cobrosAPI from '../../../api/cobros';
+import cobrosAlumnosAPI from '../../../api/cobrosAlumnos';
 
-// Hook principal para gestión de cobros
+/* ============================================================================
+   Normalización y helpers
+============================================================================ */
+
+const pickArray = (resp) =>
+  resp?.data?.data ?? resp?.data?.cobros ?? resp?.data?.cobrosAlumnos ?? resp?.data ?? [];
+
+const safeDate = (d) => (d ? new Date(d) : null);
+
+const deriveEstado = (item) => {
+  if (item?.activo === false || item?.fecha_eliminacion) return 'Cancelado';
+  if (item?.estado) return item.estado;
+  if (item?.fecha_pago) return 'Pagado';
+  const fv = safeDate(item?.fecha_vencimiento);
+  if (!fv) return 'Pendiente';
+  const diff = Math.ceil((fv - new Date()) / (1000 * 60 * 60 * 24));
+  if (diff < 0) return 'Vencido';
+  if (diff <= 3) return 'Por Vencer';
+  return 'Pendiente';
+};
+
+const normalizeGeneral = (raw) => {
+  const estado = deriveEstado(raw);
+  const monto = raw.monto_total ?? raw.monto ?? 0;
+  return {
+    id: raw.id,
+    curso_id: raw.curso_id ?? null,
+    concepto: raw.concepto ?? '',
+    descripcion: raw.descripcion ?? '',
+    monto,
+    fecha_emision: raw.fecha_emision ?? raw.fecha_creacion?.slice?.(0, 10) ?? null,
+    fecha_vencimiento: raw.fecha_vencimiento ?? null,
+    estado,
+    metodo_pago: raw.metodo_pago ?? null,
+    numero_comprobante: raw.numero_comprobante ?? null,
+    observaciones: raw.observaciones ?? null,
+    tipo_cobro: 'General',
+    categoria: raw.categoria ?? 'Otros',
+    alumno_id: null,
+    alumno_nombre: null,
+    apoderado_nombre: null,
+    fecha_pago: raw.fecha_pago ?? null,
+    monto_pagado: raw.monto_pagado ?? (estado === 'Pagado' ? monto : 0),
+    descuento: raw.descuento ?? 0,
+    recargo: raw.recargo ?? 0,
+    activo: raw.fecha_eliminacion ? false : (raw.activo ?? true),
+    creado_por: raw.creado_por ?? null,
+    fecha_creacion: raw.fecha_creacion ?? null,
+    actualizado_por: raw.actualizado_por ?? null,
+    fecha_actualizacion: raw.fecha_actualizacion ?? null,
+    eliminado_por: raw.eliminado_por ?? null,
+    fecha_eliminacion: raw.fecha_eliminacion ?? null,
+    _raw: raw,
+  };
+};
+
+const normalizeAlumno = (raw) => {
+  const estado = deriveEstado(raw);
+  const monto = raw.monto ?? raw.monto_total ?? 0;
+  return {
+    id: raw.id,
+    curso_id: raw.curso_id ?? raw.alumno?.curso_id ?? null,
+    concepto: raw.concepto ?? '',
+    descripcion: raw.descripcion ?? '',
+    monto,
+    fecha_emision: raw.fecha_emision ?? raw.fecha_creacion?.slice?.(0, 10) ?? null,
+    fecha_vencimiento: raw.fecha_vencimiento ?? null,
+    estado,
+    metodo_pago: raw.metodo_pago ?? null,
+    numero_comprobante: raw.numero_comprobante ?? null,
+    observaciones: raw.observaciones ?? null,
+    tipo_cobro: 'Alumno',
+    categoria: raw.categoria ?? 'Otros',
+    alumno_id: raw.alumno_id ?? raw.alumno?.id ?? null,
+    alumno_nombre: raw.alumno_nombre ?? raw.alumno?.nombre_completo ?? null,
+    apoderado_nombre:
+      raw.apoderado_nombre ?? raw.alumno?.apoderado?.nombre_completo ?? null,
+    fecha_pago: raw.fecha_pago ?? null,
+    monto_pagado: raw.monto_pagado ?? (estado === 'Pagado' ? monto : 0),
+    descuento: raw.descuento ?? 0,
+    recargo: raw.recargo ?? 0,
+    activo: raw.fecha_eliminacion ? false : (raw.activo ?? true),
+    creado_por: raw.creado_por ?? null,
+    fecha_creacion: raw.fecha_creacion ?? null,
+    actualizado_por: raw.actualizado_por ?? null,
+    fecha_actualizacion: raw.fecha_actualizacion ?? null,
+    eliminado_por: raw.eliminado_por ?? null,
+    fecha_eliminacion: raw.fecha_eliminacion ?? null,
+    _raw: raw,
+  };
+};
+
+const pickClient = (tipo) => (tipo === 'Alumno' ? cobrosAlumnosAPI : cobrosAPI);
+
+const mapFormToBackend = (form) => {
+  if (form.tipo_cobro === 'Alumno') {
+    return {
+      concepto: form.concepto,
+      descripcion: form.descripcion,
+      monto: Number(form.monto),
+      alumno_id: Number(form.alumno_id),
+      categoria: form.categoria,
+      fecha_emision: form.fecha_emision,
+      fecha_vencimiento: form.fecha_vencimiento,
+      numero_comprobante: form.numero_comprobante || undefined,
+      observaciones: form.observaciones || undefined,
+      // curso_id opcional; el backend puede inferirlo desde el alumno
+      ...(form.curso_id ? { curso_id: Number(form.curso_id) } : {}),
+    };
+  }
+  // GENERAL: importante enviar curso_id
+  return {
+    concepto: form.concepto,
+    descripcion: form.descripcion,
+    monto_total: Number(form.monto),
+    categoria: form.categoria,
+    fecha_emision: form.fecha_emision,
+    fecha_vencimiento: form.fecha_vencimiento,
+    numero_comprobante: form.numero_comprobante || undefined,
+    observaciones: form.observaciones || undefined,
+    curso_id: form.curso_id ? Number(form.curso_id) : undefined,
+  };
+};
+
+const toTime = (v) => (v ? new Date(v).getTime() : 0);
+
+/* ============================================================================
+   useCobros: CRUD + sync con backend (cobros generales y por alumno)
+============================================================================ */
+
 export const useCobros = () => {
   const [cobros, setCobros] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Datos mock para cobros
-  const mockCobros = useMemo(() => [
-    {
-      id: 1,
-      concepto: 'Matrícula 2024',
-      descripcion: 'Pago de matrícula anual para el año académico 2024',
-      monto: 150000,
-      fecha_emision: '2024-01-15',
-      fecha_vencimiento: '2024-02-15',
-      estado: 'Pagado',
-      metodo_pago: 'Transferencia',
-      numero_comprobante: 'MAT-2024-001',
-      observaciones: 'Pago realizado en fecha',
-      tipo_cobro: 'General',
-      categoria: 'Matrícula',
-      alumno_id: null,
-      alumno_nombre: null,
-      apoderado_nombre: null,
-      fecha_pago: '2024-02-10T14:30:00Z',
-      monto_pagado: 150000,
-      descuento: 0,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-01-15T10:30:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-02-10T14:30:00Z',
-    },
-    {
-      id: 2,
-      concepto: 'Mensualidad Marzo 2024',
-      descripcion: 'Pago mensual correspondiente al mes de marzo',
-      monto: 85000,
-      fecha_emision: '2024-03-01',
-      fecha_vencimiento: '2024-03-15',
-      estado: 'Pendiente',
-      metodo_pago: null,
-      numero_comprobante: 'MENS-2024-003',
-      observaciones: null,
-      tipo_cobro: 'Alumno',
-      categoria: 'Mensualidad',
-      alumno_id: 1,
-      alumno_nombre: 'Juan Carlos Pérez',
-      apoderado_nombre: 'María Pérez González',
-      fecha_pago: null,
-      monto_pagado: 0,
-      descuento: 0,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-03-01T08:00:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-03-01T08:00:00Z',
-    },
-    {
-      id: 3,
-      concepto: 'Material Didáctico',
-      descripcion: 'Cobro por material didáctico del primer semestre',
-      monto: 45000,
-      fecha_emision: '2024-02-20',
-      fecha_vencimiento: '2024-03-20',
-      estado: 'Vencido',
-      metodo_pago: null,
-      numero_comprobante: 'MAT-2024-020',
-      observaciones: 'Cobro vencido, aplicar recargo',
-      tipo_cobro: 'Alumno',
-      categoria: 'Material',
-      alumno_id: 2,
-      alumno_nombre: 'Ana María González',
-      apoderado_nombre: 'Roberto González Silva',
-      fecha_pago: null,
-      monto_pagado: 0,
-      descuento: 0,
-      recargo: 4500,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-02-20T09:15:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-03-21T10:00:00Z',
-    },
-    {
-      id: 4,
-      concepto: 'Mensualidad Febrero 2024',
-      descripcion: 'Pago mensual correspondiente al mes de febrero',
-      monto: 85000,
-      fecha_emision: '2024-02-01',
-      fecha_vencimiento: '2024-02-15',
-      estado: 'Pagado',
-      metodo_pago: 'Efectivo',
-      numero_comprobante: 'MENS-2024-002',
-      observaciones: 'Pago con descuento por pronto pago',
-      tipo_cobro: 'Alumno',
-      categoria: 'Mensualidad',
-      alumno_id: 3,
-      alumno_nombre: 'Carlos Eduardo Morales',
-      apoderado_nombre: 'Elena Morales Torres',
-      fecha_pago: '2024-02-12T16:45:00Z',
-      monto_pagado: 80750,
-      descuento: 4250,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-02-01T08:30:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-02-12T16:45:00Z',
-    },
-    {
-      id: 5,
-      concepto: 'Actividad Extracurricular',
-      descripcion: 'Cobro por taller de música y arte',
-      monto: 35000,
-      fecha_emision: '2024-03-10',
-      fecha_vencimiento: '2024-03-25',
-      estado: 'Pendiente',
-      metodo_pago: null,
-      numero_comprobante: 'ACT-2024-010',
-      observaciones: null,
-      tipo_cobro: 'Alumno',
-      categoria: 'Actividades',
-      alumno_id: 1,
-      alumno_nombre: 'Juan Carlos Pérez',
-      apoderado_nombre: 'María Pérez González',
-      fecha_pago: null,
-      monto_pagado: 0,
-      descuento: 0,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-03-10T11:20:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-03-10T11:20:00Z',
-    },
-    {
-      id: 6,
-      concepto: 'Seguro Escolar',
-      descripcion: 'Pago anual del seguro escolar obligatorio',
-      monto: 25000,
-      fecha_emision: '2024-01-20',
-      fecha_vencimiento: '2024-02-20',
-      estado: 'Pagado',
-      metodo_pago: 'Tarjeta de Débito',
-      numero_comprobante: 'SEG-2024-001',
-      observaciones: 'Pago procesado automáticamente',
-      tipo_cobro: 'General',
-      categoria: 'Seguro',
-      alumno_id: null,
-      alumno_nombre: null,
-      apoderado_nombre: null,
-      fecha_pago: '2024-02-18T10:15:00Z',
-      monto_pagado: 25000,
-      descuento: 0,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-01-20T14:00:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-02-18T10:15:00Z',
-    },
-    {
-      id: 7,
-      concepto: 'Mensualidad Abril 2024',
-      descripcion: 'Pago mensual correspondiente al mes de abril',
-      monto: 85000,
-      fecha_emision: '2024-04-01',
-      fecha_vencimiento: '2024-04-15',
-      estado: 'Por Vencer',
-      metodo_pago: null,
-      numero_comprobante: 'MENS-2024-004',
-      observaciones: null,
-      tipo_cobro: 'Alumno',
-      categoria: 'Mensualidad',
-      alumno_id: 2,
-      alumno_nombre: 'Ana María González',
-      apoderado_nombre: 'Roberto González Silva',
-      fecha_pago: null,
-      monto_pagado: 0,
-      descuento: 0,
-      recargo: 0,
-      activo: true,
-      creado_por: 1,
-      fecha_creacion: '2024-04-01T08:00:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-04-01T08:00:00Z',
-    },
-    {
-      id: 8,
-      concepto: 'Uniforme Escolar',
-      descripcion: 'Cobro por uniforme escolar completo',
-      monto: 120000,
-      fecha_emision: '2024-02-15',
-      fecha_vencimiento: '2024-03-15',
-      estado: 'Cancelado',
-      metodo_pago: null,
-      numero_comprobante: 'UNI-2024-015',
-      observaciones: 'Cobro cancelado por cambio de proveedor',
-      tipo_cobro: 'Alumno',
-      categoria: 'Uniforme',
-      alumno_id: 4,
-      alumno_nombre: 'Sofía Alejandra Ruiz',
-      apoderado_nombre: 'Carmen Ruiz Herrera',
-      fecha_pago: null,
-      monto_pagado: 0,
-      descuento: 0,
-      recargo: 0,
-      activo: false,
-      creado_por: 1,
-      fecha_creacion: '2024-02-15T13:30:00Z',
-      actualizado_por: 1,
-      fecha_actualizacion: '2024-03-10T09:45:00Z',
-      eliminado_por: 1,
-      fecha_eliminacion: '2024-03-10T09:45:00Z',
-    },
-  ], []);
+  // Cargar ambos orígenes
+  const loadCobros = useCallback(
+    async (params = {}) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [genResp, aluResp] = await Promise.all([
+          cobrosAPI.getAll({ limit: 500, ...params }),
+          cobrosAlumnosAPI.getAll({ limit: 500, ...params }),
+        ]);
 
-  // Cargar cobros
-  const loadCobros = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+        const generales = pickArray(genResp).map(normalizeGeneral);
+        const porAlumno = pickArray(aluResp).map(normalizeAlumno);
+
+        const merged = [...generales, ...porAlumno].sort((a, b) => toTime(b.fecha_emision) - toTime(a.fecha_emision));
+
+        setCobros(merged);
+        setLastUpdated(new Date());
+      } catch (err) {
+        const msg =
+          err?.response?.data?.message ||
+          err?.message ||
+          'Error al cargar cobros';
+        setError(msg);
+        toast.error('Error al cargar cobros', { description: msg });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
+  );
+
+  const createCobro = useCallback(async (formData) => {
+    const client = pickClient(formData.tipo_cobro);
+    const body = mapFormToBackend(formData);
 
     try {
-      // Simular carga de datos
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      setCobros(mockCobros);
-      setLastUpdated(new Date());
-      
+      const resp = await client.create(body);
+      const created = resp?.data?.data ?? resp?.data;
+      const normalized =
+        formData.tipo_cobro === 'Alumno' ? normalizeAlumno(created) : normalizeGeneral(created);
+
+      setCobros((prev) => [normalized, ...prev]);
+      toast.success('Cobro creado exitosamente', { description: normalized.concepto });
+      return { success: true, data: normalized };
     } catch (err) {
-      const errorMessage = err.message || 'Error al cargar cobros';
-      setError(errorMessage);
-      toast.error('Error al cargar cobros', {
-        description: errorMessage,
-      });
-    } finally {
-      setIsLoading(false);
+      const msg = err?.response?.data?.message || 'Error al crear cobro';
+      toast.error('Error al crear cobro', { description: msg });
+      return { success: false, error: msg };
     }
-  }, [mockCobros]);
+  }, []);
 
-  // Crear cobro
-  const createCobro = useCallback(async (cobroData) => {
+  const updateCobro = useCallback(async (id, formData) => {
+    const client = pickClient(formData.tipo_cobro);
+    const body = mapFormToBackend(formData);
+
     try {
-      // Simular creación
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const newCobro = {
-        ...cobroData,
-        id: Date.now(),
-        estado: 'Pendiente',
-        fecha_pago: null,
-        monto_pagado: 0,
-        activo: true,
-        creado_por: 1,
-        fecha_creacion: new Date().toISOString(),
-        actualizado_por: 1,
-        fecha_actualizacion: new Date().toISOString(),
+      const resp = await client.update(id, body);
+      const updated = resp?.data?.data ?? resp?.data;
+      const normalized =
+        formData.tipo_cobro === 'Alumno' ? normalizeAlumno(updated) : normalizeGeneral(updated);
+
+      setCobros((prev) => prev.map((c) => (c.id === id ? { ...c, ...normalized } : c)));
+      toast.success('Cobro actualizado exitosamente');
+      return { success: true };
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'Error al actualizar cobro';
+      toast.error('Error al actualizar cobro', { description: msg });
+      return { success: false, error: msg };
+    }
+  }, []);
+
+  const marcarComoPagado = useCallback(
+    async (id, datosPago = {}) => {
+      const target = cobros.find((c) => c.id === id);
+      if (!target) return { success: false, error: 'Cobro no encontrado' };
+
+      const client = pickClient(target.tipo_cobro);
+      const payload = {
+        estado: 'Pagado',
+        fecha_pago: new Date().toISOString(),
+        monto_pagado: datosPago.monto_pagado ?? target.monto,
+        metodo_pago: datosPago.metodo_pago,
+        numero_comprobante: datosPago.numero_comprobante,
+        observaciones: datosPago.observaciones,
       };
-      
-      setCobros(prev => [...prev, newCobro]);
-      
-      toast.success('Cobro creado exitosamente', {
-        description: `${newCobro.concepto} ha sido registrado`,
-      });
-      
-      return { success: true, data: newCobro };
-    } catch (err) {
-      const errorMessage = err.message || 'Error al crear cobro';
-      toast.error('Error al crear cobro', {
-        description: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  }, []);
 
-  // Actualizar cobro
-  const updateCobro = useCallback(async (id, cobroData) => {
-    try {
-      // Simular actualización
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      setCobros(prev => prev.map(cobro => 
-        cobro.id === id 
-          ? { 
-              ...cobro, 
-              ...cobroData,
-              actualizado_por: 1,
-              fecha_actualizacion: new Date().toISOString(),
-            }
-          : cobro
-      ));
-      
-      toast.success('Cobro actualizado exitosamente', {
-        description: 'Los datos han sido guardados correctamente',
-      });
-      
-      return { success: true };
-    } catch (err) {
-      const errorMessage = err.message || 'Error al actualizar cobro';
-      toast.error('Error al actualizar cobro', {
-        description: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  }, []);
+      try {
+        await client.update(id, payload);
+        setCobros((prev) =>
+          prev.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  estado: 'Pagado',
+                  fecha_pago: payload.fecha_pago,
+                  monto_pagado: payload.monto_pagado,
+                  metodo_pago: payload.metodo_pago ?? c.metodo_pago,
+                  numero_comprobante: payload.numero_comprobante ?? c.numero_comprobante,
+                  observaciones: payload.observaciones ?? c.observaciones,
+                }
+              : c
+          )
+        );
+        toast.success('Pago registrado');
+        return { success: true };
+      } catch (err) {
+        const msg = err?.response?.data?.message || 'Error al registrar pago';
+        toast.error('Error al registrar pago', { description: msg });
+        return { success: false, error: msg };
+      }
+    },
+    [cobros]
+  );
 
-  // Marcar como pagado
-  const marcarComoPagado = useCallback(async (id, datosPago) => {
-    try {
-      // Simular procesamiento de pago
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      setCobros(prev => prev.map(cobro => 
-        cobro.id === id 
-          ? { 
-              ...cobro, 
-              estado: 'Pagado',
-              fecha_pago: new Date().toISOString(),
-              monto_pagado: datosPago.monto_pagado || cobro.monto,
-              metodo_pago: datosPago.metodo_pago,
-              numero_comprobante: datosPago.numero_comprobante || cobro.numero_comprobante,
-              observaciones: datosPago.observaciones || cobro.observaciones,
-              actualizado_por: 1,
-              fecha_actualizacion: new Date().toISOString(),
-            }
-          : cobro
-      ));
-      
-      toast.success('Pago registrado exitosamente', {
-        description: 'El cobro ha sido marcado como pagado',
-      });
-      
-      return { success: true };
-    } catch (err) {
-      const errorMessage = err.message || 'Error al registrar pago';
-      toast.error('Error al registrar pago', {
-        description: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  }, []);
+  const cancelarCobro = useCallback(
+    async (id, motivo) => {
+      const target = cobros.find((c) => c.id === id);
+      if (!target) return { success: false, error: 'Cobro no encontrado' };
 
-  // Cancelar cobro
-  const cancelarCobro = useCallback(async (id, motivo) => {
-    try {
-      // Simular cancelación
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      setCobros(prev => prev.map(cobro => 
-        cobro.id === id 
-          ? { 
-              ...cobro, 
-              estado: 'Cancelado',
-              observaciones: motivo,
-              activo: false,
-              eliminado_por: 1,
-              fecha_eliminacion: new Date().toISOString(),
-            }
-          : cobro
-      ));
-      
-      toast.success('Cobro cancelado exitosamente', {
-        description: 'El cobro ha sido marcado como cancelado',
-      });
-      
-      return { success: true };
-    } catch (err) {
-      const errorMessage = err.message || 'Error al cancelar cobro';
-      toast.error('Error al cancelar cobro', {
-        description: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  }, []);
+      const client = pickClient(target.tipo_cobro);
 
-  // Reactivar cobro
-  const reactivarCobro = useCallback(async (id) => {
-    try {
-      // Simular reactivación
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      setCobros(prev => prev.map(cobro => 
-        cobro.id === id 
-          ? { 
-              ...cobro, 
-              estado: 'Pendiente',
-              activo: true,
-              eliminado_por: null,
-              fecha_eliminacion: null,
-              actualizado_por: 1,
-              fecha_actualizacion: new Date().toISOString(),
-            }
-          : cobro
-      ));
-      
-      toast.success('Cobro reactivado exitosamente', {
-        description: 'El cobro ha sido reactivado',
-      });
-      
-      return { success: true };
-    } catch (err) {
-      const errorMessage = err.message || 'Error al reactivar cobro';
-      toast.error('Error al reactivar cobro', {
-        description: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  }, []);
+      try {
+        await client.delete(id); // soft-delete
+        setCobros((prev) =>
+          prev.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  activo: false,
+                  estado: 'Cancelado',
+                  observaciones: motivo || c.observaciones,
+                  fecha_eliminacion: new Date().toISOString(),
+                }
+              : c
+          )
+        );
+        toast.success('Cobro cancelado');
+        return { success: true };
+      } catch (err) {
+        const msg = err?.response?.data?.message || 'Error al cancelar cobro';
+        toast.error('Error al cancelar cobro', { description: msg });
+        return { success: false, error: msg };
+      }
+    },
+    [cobros]
+  );
 
-  // Cargar datos al montar el componente
+  const reactivarCobro = useCallback(
+    async (id) => {
+      const target = cobros.find((c) => c.id === id);
+      if (!target) return { success: false, error: 'Cobro no encontrado' };
+
+      const client = pickClient(target.tipo_cobro);
+
+      try {
+        await client.restore(id); // PATCH :id/restore
+        setCobros((prev) =>
+          prev.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  activo: true,
+                  estado: c.estado === 'Pagado' ? 'Pagado' : 'Pendiente',
+                  fecha_eliminacion: null,
+                }
+              : c
+          )
+        );
+        toast.success('Cobro reactivado');
+        return { success: true };
+      } catch (err) {
+        const msg = err?.response?.data?.message || 'Error al reactivar cobro';
+        toast.error('Error al reactivar cobro', { description: msg });
+        return { success: false, error: msg };
+      }
+    },
+    [cobros]
+  );
+
   useEffect(() => {
     loadCobros();
   }, [loadCobros]);
@@ -433,7 +338,10 @@ export const useCobros = () => {
   };
 };
 
-// Hook para filtros y búsqueda de cobros
+/* ============================================================================
+   useCobrosFilter: búsqueda, filtros y ordenamiento
+============================================================================ */
+
 export const useCobrosFilter = (cobros) => {
   const [filters, setFilters] = useState({
     search: '',
@@ -450,78 +358,63 @@ export const useCobrosFilter = (cobros) => {
   });
 
   const filteredCobros = useMemo(() => {
-    let filtered = [...cobros];
+    let data = [...cobros];
 
-    // Filtro por búsqueda
+    // Buscar
     if (filters.search) {
-      const searchLower = filters.search.toLowerCase();
-      filtered = filtered.filter(cobro => 
-        cobro.concepto.toLowerCase().includes(searchLower) ||
-        cobro.descripcion.toLowerCase().includes(searchLower) ||
-        cobro.numero_comprobante.toLowerCase().includes(searchLower) ||
-        (cobro.alumno_nombre && cobro.alumno_nombre.toLowerCase().includes(searchLower)) ||
-        (cobro.apoderado_nombre && cobro.apoderado_nombre.toLowerCase().includes(searchLower))
+      const q = filters.search.toLowerCase();
+      data = data.filter((c) =>
+        [c.concepto, c.descripcion, c.numero_comprobante, c.alumno_nombre, c.apoderado_nombre]
+          .filter(Boolean)
+          .some((v) => v.toLowerCase().includes(q))
       );
     }
 
-    // Filtro por estado
-    if (filters.estado) {
-      filtered = filtered.filter(cobro => cobro.estado === filters.estado);
-    }
+    // Filtros
+    if (filters.estado) data = data.filter((c) => c.estado === filters.estado);
+    if (filters.tipo_cobro) data = data.filter((c) => c.tipo_cobro === filters.tipo_cobro);
+    if (filters.categoria) data = data.filter((c) => c.categoria === filters.categoria);
+    if (filters.metodo_pago) data = data.filter((c) => c.metodo_pago === filters.metodo_pago);
 
-    // Filtro por tipo de cobro
-    if (filters.tipo_cobro) {
-      filtered = filtered.filter(cobro => cobro.tipo_cobro === filters.tipo_cobro);
-    }
-
-    // Filtro por categoría
-    if (filters.categoria) {
-      filtered = filtered.filter(cobro => cobro.categoria === filters.categoria);
-    }
-
-    // Filtro por método de pago
-    if (filters.metodo_pago) {
-      filtered = filtered.filter(cobro => cobro.metodo_pago === filters.metodo_pago);
-    }
-
-    // Filtro por rango de fechas
+    // Rango de fechas (fecha_emision)
     if (filters.fecha_desde) {
-      filtered = filtered.filter(cobro => cobro.fecha_emision >= filters.fecha_desde);
+      const fd = new Date(filters.fecha_desde);
+      data = data.filter((c) => new Date(c.fecha_emision) >= fd);
     }
     if (filters.fecha_hasta) {
-      filtered = filtered.filter(cobro => cobro.fecha_emision <= filters.fecha_hasta);
+      const fh = new Date(filters.fecha_hasta);
+      fh.setHours(23, 59, 59, 999); // incluir día completo
+      data = data.filter((c) => new Date(c.fecha_emision) <= fh);
     }
 
-    // Filtro por rango de montos
-    if (filters.monto_min) {
-      filtered = filtered.filter(cobro => cobro.monto >= parseInt(filters.monto_min));
-    }
-    if (filters.monto_max) {
-      filtered = filtered.filter(cobro => cobro.monto <= parseInt(filters.monto_max));
-    }
+    // Rango de montos
+    if (filters.monto_min) data = data.filter((c) => c.monto >= Number(filters.monto_min));
+    if (filters.monto_max) data = data.filter((c) => c.monto <= Number(filters.monto_max));
 
-    // Ordenamiento
-    filtered.sort((a, b) => {
-      let aValue = a[filters.sortBy];
-      let bValue = b[filters.sortBy];
+    // Orden
+    const { sortBy, sortOrder } = filters;
+    data.sort((a, b) => {
+      let av = a[sortBy];
+      let bv = b[sortBy];
 
-      if (typeof aValue === 'string') {
-        aValue = aValue.toLowerCase();
-        bValue = bValue.toLowerCase();
+      if (sortBy.startsWith('fecha')) {
+        av = av ? new Date(av).getTime() : 0;
+        bv = bv ? new Date(bv).getTime() : 0;
+      } else if (typeof av === 'string') {
+        av = av.toLowerCase();
+        bv = (bv ?? '').toLowerCase();
       }
 
-      if (filters.sortOrder === 'asc') {
-        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
-      } else {
-        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
-      }
+      if (av < bv) return sortOrder === 'asc' ? -1 : 1;
+      if (av > bv) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
     });
 
-    return filtered;
+    return data;
   }, [cobros, filters]);
 
   const updateFilter = useCallback((key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
   const resetFilters = useCallback(() => {
@@ -540,83 +433,66 @@ export const useCobrosFilter = (cobros) => {
     });
   }, []);
 
-  return {
-    filters,
-    filteredCobros,
-    updateFilter,
-    resetFilters,
-  };
+  return { filters, filteredCobros, updateFilter, resetFilters };
 };
 
-// Hook para estadísticas de cobros
+/* ============================================================================
+   useCobrosStats: KPIs y agregaciones
+============================================================================ */
+
 export const useCobrosStats = (cobros) => {
   const stats = useMemo(() => {
     const total = cobros.length;
-    const activos = cobros.filter(c => c.activo).length;
-    
-    // Estadísticas por estado
-    const porEstado = cobros.reduce((acc, cobro) => {
-      if (cobro.activo) {
-        acc[cobro.estado] = (acc[cobro.estado] || 0) + 1;
-      }
+    const activos = cobros.filter((c) => c.activo).length;
+
+    const activosOnly = cobros.filter((c) => c.activo);
+    const porEstado = activosOnly.reduce((acc, c) => {
+      acc[c.estado] = (acc[c.estado] || 0) + 1;
       return acc;
     }, {});
 
-    // Montos totales
-    const cobrosActivos = cobros.filter(c => c.activo);
-    const montoTotal = cobrosActivos.reduce((sum, c) => sum + c.monto, 0);
-    const montoPagado = cobrosActivos
-      .filter(c => c.estado === 'Pagado')
-      .reduce((sum, c) => sum + c.monto_pagado, 0);
-    const montoPendiente = cobrosActivos
-      .filter(c => ['Pendiente', 'Por Vencer', 'Vencido'].includes(c.estado))
-      .reduce((sum, c) => sum + c.monto, 0);
+    const montoTotal = activosOnly.reduce((s, c) => s + (c.monto || 0), 0);
+    const montoPagado = activosOnly
+      .filter((c) => c.estado === 'Pagado')
+      .reduce((s, c) => s + (c.monto_pagado || 0), 0);
+    const montoPendiente = activosOnly
+      .filter((c) => ['Pendiente', 'Por Vencer', 'Vencido'].includes(c.estado))
+      .reduce((s, c) => s + (c.monto || 0), 0);
 
-    // Efectividad de cobranza
-    const efectividadCobranza = montoTotal > 0 ? (montoPagado / montoTotal) * 100 : 0;
+    const cobrosVencidos = activosOnly.filter((c) => c.estado === 'Vencido').length;
+    const montoVencido = activosOnly
+      .filter((c) => c.estado === 'Vencido')
+      .reduce((s, c) => s + (c.monto || 0), 0);
 
-    // Cobros vencidos
-    const cobrosVencidos = cobrosActivos.filter(c => c.estado === 'Vencido').length;
-    const montoVencido = cobrosActivos
-      .filter(c => c.estado === 'Vencido')
-      .reduce((sum, c) => sum + c.monto, 0);
-
-    // Distribución por tipo
-    const porTipo = cobrosActivos.reduce((acc, cobro) => {
-      acc[cobro.tipo_cobro] = (acc[cobro.tipo_cobro] || 0) + 1;
+    const porTipo = activosOnly.reduce((acc, c) => {
+      acc[c.tipo_cobro] = (acc[c.tipo_cobro] || 0) + 1;
       return acc;
     }, {});
 
-    // Distribución por categoría
-    const porCategoria = cobrosActivos.reduce((acc, cobro) => {
-      acc[cobro.categoria] = (acc[cobro.categoria] || 0) + 1;
+    const porCategoria = activosOnly.reduce((acc, c) => {
+      acc[c.categoria] = (acc[c.categoria] || 0) + 1;
       return acc;
     }, {});
 
-    // Métodos de pago más usados
-    const porMetodoPago = cobrosActivos
-      .filter(c => c.metodo_pago)
-      .reduce((acc, cobro) => {
-        acc[cobro.metodo_pago] = (acc[cobro.metodo_pago] || 0) + 1;
+    const porMetodoPago = activosOnly
+      .filter((c) => c.metodo_pago)
+      .reduce((acc, c) => {
+        acc[c.metodo_pago] = (acc[c.metodo_pago] || 0) + 1;
         return acc;
       }, {});
 
-    // Cobros del mes actual
-    const fechaActual = new Date();
-    const mesActual = fechaActual.getMonth();
-    const añoActual = fechaActual.getFullYear();
-    
-    const cobrosEsteMes = cobrosActivos.filter(cobro => {
-      const fechaCobro = new Date(cobro.fecha_emision);
-      return fechaCobro.getMonth() === mesActual && fechaCobro.getFullYear() === añoActual;
-    }).length;
+    // Mes actual
+    const now = new Date();
+    const mes = now.getMonth();
+    const year = now.getFullYear();
 
-    const montoEsteMes = cobrosActivos
-      .filter(cobro => {
-        const fechaCobro = new Date(cobro.fecha_emision);
-        return fechaCobro.getMonth() === mesActual && fechaCobro.getFullYear() === añoActual;
-      })
-      .reduce((sum, c) => sum + c.monto, 0);
+    const delMes = activosOnly.filter((c) => {
+      const d = new Date(c.fecha_emision);
+      return d.getMonth() === mes && d.getFullYear() === year;
+    });
+
+    const cobrosEsteMes = delMes.length;
+    const montoEsteMes = delMes.reduce((s, c) => s + (c.monto || 0), 0);
 
     return {
       total,
@@ -626,7 +502,7 @@ export const useCobrosStats = (cobros) => {
       montoPagado,
       montoPendiente,
       montoVencido,
-      efectividadCobranza,
+      efectividadCobranza: montoTotal > 0 ? (montoPagado / montoTotal) * 100 : 0,
       cobrosVencidos,
       porTipo,
       porCategoria,
@@ -640,7 +516,10 @@ export const useCobrosStats = (cobros) => {
   return stats;
 };
 
-// Hook para validación de formularios de cobros
+/* ============================================================================
+   useCobroValidation: validación de formularios
+============================================================================ */
+
 export const useCobroValidation = () => {
   const validateConcepto = useCallback((concepto) => {
     if (!concepto?.trim()) return 'El concepto del cobro es requerido';
@@ -651,66 +530,57 @@ export const useCobroValidation = () => {
 
   const validateMonto = useCallback((monto) => {
     if (!monto) return 'El monto es requerido';
-    const num = parseInt(monto);
+    const num = parseInt(monto, 10);
     if (isNaN(num) || num <= 0) return 'El monto debe ser un número mayor a 0';
     return null;
   }, []);
 
   const validateFecha = useCallback((fecha) => {
     if (!fecha) return 'La fecha es requerida';
-    const fechaObj = new Date(fecha);
-    if (isNaN(fechaObj.getTime())) return 'La fecha no es válida';
+    const d = new Date(fecha);
+    if (isNaN(d.getTime())) return 'La fecha no es válida';
     return null;
   }, []);
 
-  const validateCobroForm = useCallback((formData) => {
-    const errors = {};
-    
-    const conceptoError = validateConcepto(formData.concepto);
-    if (conceptoError) errors.concepto = conceptoError;
-    
-    const montoError = validateMonto(formData.monto);
-    if (montoError) errors.monto = montoError;
-    
-    if (!formData.descripcion?.trim()) {
-      errors.descripcion = 'La descripción es requerida';
-    }
-    
-    const fechaEmisionError = validateFecha(formData.fecha_emision);
-    if (fechaEmisionError) errors.fecha_emision = fechaEmisionError;
-    
-    const fechaVencimientoError = validateFecha(formData.fecha_vencimiento);
-    if (fechaVencimientoError) errors.fecha_vencimiento = fechaVencimientoError;
-    
-    if (formData.fecha_emision && formData.fecha_vencimiento && 
-        formData.fecha_emision > formData.fecha_vencimiento) {
-      errors.fecha_vencimiento = 'La fecha de vencimiento debe ser posterior a la fecha de emisión';
-    }
-    
-    if (!formData.tipo_cobro?.trim()) {
-      errors.tipo_cobro = 'El tipo de cobro es requerido';
-    }
-    
-    if (!formData.categoria?.trim()) {
-      errors.categoria = 'La categoría es requerida';
-    }
-    
-    if (formData.tipo_cobro === 'Alumno' && !formData.alumno_id) {
-      errors.alumno_id = 'Debe seleccionar un alumno para cobros individuales';
-    }
-    
-    return {
-      isValid: Object.keys(errors).length === 0,
-      errors,
-    };
-  }, [validateConcepto, validateMonto, validateFecha]);
+  const validateCobroForm = useCallback(
+    (formData) => {
+      const errors = {};
 
-  return {
-    validateConcepto,
-    validateMonto,
-    validateFecha,
-    validateCobroForm,
-  };
+      const e1 = validateConcepto(formData.concepto);
+      if (e1) errors.concepto = e1;
+
+      const e2 = validateMonto(formData.monto);
+      if (e2) errors.monto = e2;
+
+      if (!formData.descripcion?.trim()) errors.descripcion = 'La descripción es requerida';
+
+      const e3 = validateFecha(formData.fecha_emision);
+      if (e3) errors.fecha_emision = e3;
+
+      const e4 = validateFecha(formData.fecha_vencimiento);
+      if (e4) errors.fecha_vencimiento = e4;
+
+      if (
+        formData.fecha_emision &&
+        formData.fecha_vencimiento &&
+        new Date(formData.fecha_emision) > new Date(formData.fecha_vencimiento)
+      ) {
+        errors.fecha_vencimiento = 'La fecha de vencimiento debe ser posterior a la de emisión';
+      }
+
+      if (!formData.tipo_cobro?.trim()) errors.tipo_cobro = 'El tipo de cobro es requerido';
+      if (!formData.categoria?.trim()) errors.categoria = 'La categoría es requerida';
+
+      if (formData.tipo_cobro === 'Alumno' && !formData.alumno_id) {
+        errors.alumno_id = 'Debe seleccionar un alumno para cobros individuales';
+      }
+
+      return { isValid: Object.keys(errors).length === 0, errors };
+    },
+    [validateConcepto, validateMonto, validateFecha]
+  );
+
+  return { validateConcepto, validateMonto, validateFecha, validateCobroForm };
 };
 
 export default {
@@ -719,4 +589,3 @@ export default {
   useCobrosStats,
   useCobroValidation,
 };
-

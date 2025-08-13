@@ -15,6 +15,17 @@ const profesoresRouter = require('./profesorRoutes');
 const nivelesRouter = require('./nivelesRoutes');
 const cursosRoutes = require('./cursoRoutes'); 
 const alumnosRoutes = require('./alumnoRoutes');
+const cobroRoutes = require('./cobroRoutes');
+const cobroAlumnoRoutes = require('./cobroAlumnoRoutes');
+
+router.use((req, _res, next) => {
+  const q = req.query || {};
+  if (typeof q.params === 'string') { try { Object.assign(q, JSON.parse(q.params)); } catch {} }
+  if (q.cursoId && !q.curso_id) q.curso_id = q.cursoId;
+  if (q.alumnoId && !q.alumno_id) q.alumno_id = q.alumnoId;
+  req.query = q;
+  next();
+});
 
 // Configurar rutas
 router.use('/auth', authRoutes);
@@ -30,6 +41,8 @@ router.use('/profesores', profesoresRouter)
 router.use('/niveles', nivelesRouter)
 router.use('/cursos', cursosRoutes);   
 router.use('/alumnos', alumnosRoutes);
+router.use('/cobros', cobroRoutes);
+router.use('/cobros-alumnos', cobroAlumnoRoutes);
 
 // Ruta de información del API
 router.get('/info', (req, res) => {

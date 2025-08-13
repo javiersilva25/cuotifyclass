@@ -84,15 +84,13 @@ const fetchWithRetry = async (url, options = {}, attempt = 1) => {
   }
 };
 
-// Función para determinar si un error es retryable
-const isRetryableError = (error) => {
-  if (error instanceof ApiError) {
-    return RETRY_CONFIG.RETRYABLE_STATUS_CODES.includes(error.status);
-  }
-  
-  // Errores de red son retryables
-  return error.name === 'TypeError' || error.name === 'NetworkError';
-};
+  const isRetryableError = (error) => {
+    if (error instanceof ApiError) {
+      if (error.status === 429) return false; // no reintentar rate-limit
+      return RETRY_CONFIG.RETRYABLE_STATUS_CODES.includes(error.status);
+    }
+    return error.name === 'TypeError' || error.name === 'NetworkError';
+  };
 
 // Cliente API principal
 class ApiClient {
@@ -128,9 +126,21 @@ class ApiClient {
   
   // Métodos HTTP básicos
   async get(endpoint, params = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-    
+    // Acepta tanto { a:1 } como { params:{ a:1 } }
+    const raw = (params && typeof params === 'object' && 'params' in params && typeof params.params === 'object')
+      ? params.params
+      : params;
+
+    const usp = new URLSearchParams();
+    Object.entries(raw || {}).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      if (Array.isArray(v)) v.forEach(val => usp.append(k, String(val)));
+      else if (typeof v !== 'object') usp.append(k, String(v)); // evita [object Object]
+      // Si necesitas enviar objetos, convértelo antes a JSON en el caller.
+    });
+
+    const qs = usp.toString();
+    const url = qs ? `${endpoint}?${qs}` : endpoint;
     return this.request(url);
   }
   

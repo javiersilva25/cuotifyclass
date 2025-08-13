@@ -20,7 +20,7 @@ import { Button } from '../components/ui/button';
 import { Progress } from '../components/ui/progress';
 import { StatsGrid } from '../features/dashboard/components/StatsCard.jsx';
 import { CobrosTable } from '../features/cobros/components/CobrosTable.jsx';
-import { CobroForm } from '../features/cobros/components/CobroForm.jsx';
+import CobroForm from '../features/cobros/components/CobroForm.jsx';
 import { 
   useCobros, 
   useCobrosFilter, 

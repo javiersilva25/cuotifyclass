@@ -1,149 +1,201 @@
-const { CobroAlumno, Curso } = require('../models');
+// services/cobroAlumnoService.js
+const { CobroAlumno, Curso, DeudaCompanero } = require('../models');
 const { addCreateAudit, addUpdateAudit } = require('../utils/auditFields');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 
 class CobroAlumnoService {
-  /**
-   * Crear un nuevo cobro de alumno
-   * @param {Object} cobroData - Datos del cobro
-   * @param {string} userId - ID del usuario que crea
-   * @returns {Promise<Object>} Cobro creado
-   */
+  /* ================== CREATE ================== */
   static async create(cobroData, userId) {
-    const dataWithAudit = {
-      ...cobroData,
-      ...addCreateAudit(userId)
-    };
-    
-    return await CobroAlumno.create(dataWithAudit);
+    const dataWithAudit = { ...cobroData, ...addCreateAudit(userId) };
+    return CobroAlumno.create(dataWithAudit);
   }
 
-  /**
-   * Obtener todos los cobros de alumnos activos
-   * @param {Object} options - Opciones de consulta
-   * @returns {Promise<Array>} Lista de cobros
-   */
+  /* ================== LIST ================== */
+  // options: { page, limit, curso_id, alumno_id, estado, search }
   static async findAll(options = {}) {
-    const {
+    let {
       page = 1,
       limit = 10,
       curso_id,
-      search
+      alumno_id,
+      estado,     // 'pendiente' | 'pagado' | 'anulado'
+      search,     // concepto / rut / nombre (aquí aplicamos a concepto)
     } = options;
 
+    page = parseInt(page, 10) || 1;
+    limit = parseInt(limit, 10) || 10;
     const offset = (page - 1) * limit;
-    const whereClause = {};
 
-    if (curso_id) {
-      whereClause.curso_id = curso_id;
-    }
-
-    if (search) {
-      whereClause.concepto = {
-        [Op.like]: `%${search}%`
-      };
-    }
+    const where = {};
+    if (curso_id)  where.curso_id  = parseInt(curso_id, 10);
+    if (alumno_id) where.alumno_id = parseInt(alumno_id, 10);
+    if (estado)    where.estado    = String(estado).toLowerCase().trim();
+    if (search)    where.concepto  = { [Op.like]: `%${search}%` };
 
     const { count, rows } = await CobroAlumno.findAndCountAll({
-      where: whereClause,
+      where,
       include: [
-        {
-          model: Curso,
-          as: 'curso',
-          attributes: ['id', 'nombre_curso', 'ano_escolar']
-        }
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
       ],
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      order: [['fecha_creacion', 'DESC']]
+      limit,
+      offset,
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
     });
 
     return {
-      cobrosAlumnos: rows,
+      items: rows,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page,
+        limit,
         totalItems: count,
-        totalPages: Math.ceil(count / limit)
-      }
+        totalPages: Math.ceil(count / limit) || 1,
+      },
     };
   }
 
-  /**
-   * Obtener un cobro de alumno por ID
-   * @param {number} id - ID del cobro
-   * @returns {Promise<Object|null>} Cobro encontrado
-   */
+  /* ================== DETAIL ================== */
   static async findById(id) {
-    return await CobroAlumno.findByPk(id, {
+    return CobroAlumno.findByPk(id, {
       include: [
-        {
-          model: Curso,
-          as: 'curso',
-          attributes: ['id', 'nombre_curso', 'ano_escolar']
-        }
-      ]
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
     });
   }
 
-  /**
-   * Obtener cobros de alumnos por curso
-   * @param {number} cursoId - ID del curso
-   * @returns {Promise<Array>} Lista de cobros del curso
-   */
+  /* ================== BY CURSO / ALUMNO / PARENT ================== */
   static async findByCurso(cursoId) {
-    return await CobroAlumno.findByCurso(cursoId);
+    return CobroAlumno.findAll({
+      where: { curso_id: parseInt(cursoId, 10) },
+      include: [
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
+    });
   }
 
-  /**
-   * Buscar cobros por concepto
-   * @param {string} concepto - Concepto a buscar
-   * @returns {Promise<Array>} Lista de cobros encontrados
-   */
+  static async findByAlumno(alumnoId) {
+    return CobroAlumno.findAll({
+      where: { alumno_id: parseInt(alumnoId, 10) },
+      include: [
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
+    });
+  }
+
+  // hijos de cobro padre (requiere columna cobro_id en cobros_alumnos)
+  static async findByParentCobro(cobroId) {
+    return CobroAlumno.findAll({
+      where: { cobro_id: parseInt(cobroId, 10) },
+      include: [
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
+    });
+  }
+
+  static async findPendientes(filters = {}) {
+    const where = { estado: 'pendiente' };
+    if (filters.curso_id)  where.curso_id  = parseInt(filters.curso_id, 10);
+    if (filters.alumno_id) where.alumno_id = parseInt(filters.alumno_id, 10);
+
+    return CobroAlumno.findAll({
+      where,
+      include: [
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
+    });
+  }
+
   static async findByConcepto(concepto) {
-    return await CobroAlumno.findByConcepto(concepto);
+    return CobroAlumno.findAll({
+      where: { concepto: { [Op.like]: `%${concepto}%` } },
+      include: [
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
+      ],
+      order: [['fecha_creacion', 'DESC'], ['id', 'DESC']],
+    });
   }
 
-  /**
-   * Actualizar un cobro de alumno
-   * @param {number} id - ID del cobro
-   * @param {Object} updateData - Datos a actualizar
-   * @param {string} userId - ID del usuario que actualiza
-   * @returns {Promise<Object|null>} Cobro actualizado
-   */
+  /* ================== UPDATE ================== */
   static async update(id, updateData, userId) {
     const cobro = await CobroAlumno.findByPk(id);
-    if (!cobro) {
-      return null;
-    }
+    if (!cobro) return null;
 
-    const dataWithAudit = {
-      ...updateData,
-      ...addUpdateAudit(userId)
-    };
-
+    const dataWithAudit = { ...updateData, ...addUpdateAudit(userId) };
     await cobro.update(dataWithAudit);
-    return await this.findById(id);
+    return this.findById(id);
   }
 
-  /**
-   * Eliminar un cobro de alumno (soft delete)
-   * @param {number} id - ID del cobro
-   * @param {string} userId - ID del usuario que elimina
-   * @returns {Promise<boolean>} Resultado de la operación
-   */
+  /* ================== PAGO / REVERSION / ANULACIÓN ================== */
+  static async registrarPago(id, data, userId) {
+    const cobro = await CobroAlumno.findByPk(id);
+    if (!cobro) return null;
+
+    const payload = {
+      estado: 'pagado',
+      monto_pagado: data.monto,
+      metodo_pago: data.metodo_pago || null,
+      transaccion_id: data.transaccion_id || null,
+      fecha_pago: data.fecha_pago || new Date(),
+      ...addUpdateAudit(userId),
+    };
+    await cobro.update(payload);
+    return this.findById(id);
+  }
+
+  static async revertirPago(id, userId) {
+    const cobro = await CobroAlumno.findByPk(id);
+    if (!cobro) return null;
+
+    await cobro.update({
+      estado: 'pendiente',
+      monto_pagado: null,
+      metodo_pago: null,
+      transaccion_id: null,
+      fecha_pago: null,
+      ...addUpdateAudit(userId),
+    });
+    return this.findById(id);
+  }
+
+  static async anular(id, { motivo = null } = {}, userId) {
+    const cobro = await CobroAlumno.findByPk(id);
+    if (!cobro) return null;
+
+    await cobro.update({
+      estado: 'anulado',
+      motivo_anulacion: motivo,
+      fecha_anulacion: new Date(),
+      ...addUpdateAudit(userId),
+    });
+    return this.findById(id);
+  }
+
+  static async reasignarAlumno(id, nuevo_alumno_id, userId) {
+    const cobro = await CobroAlumno.findByPk(id);
+    if (!cobro) return null;
+
+    await cobro.update({
+      alumno_id: parseInt(nuevo_alumno_id, 10),
+      ...addUpdateAudit(userId),
+    });
+    return this.findById(id);
+  }
+
+  static async isPaid(id) {
+    const cobro = await CobroAlumno.findByPk(id, { attributes: ['id', 'estado'] });
+    return !!cobro && cobro.estado === 'pagado';
+  }
+
+  /* ================== DELETE (SOFT) ================== */
   static async delete(id, userId) {
     const cobro = await CobroAlumno.findByPk(id);
-    if (!cobro) {
-      return false;
-    }
+    if (!cobro) return false;
 
-    // Verificar si el cobro tiene deudas de compañeros asociadas
-    const { DeudaCompanero } = require('../models');
-    const deudasCount = await DeudaCompanero.count({
-      where: { cobro_alumnos_id: id }
-    });
-
+    // Regla de negocio: no eliminar si tiene deudas de compañeros asociadas
+    const deudasCount = await DeudaCompanero.count({ where: { cobro_alumnos_id: id } });
     if (deudasCount > 0) {
       throw new Error('No se puede eliminar el cobro porque tiene deudas de compañeros asociadas');
     }
@@ -152,100 +204,64 @@ class CobroAlumnoService {
     return true;
   }
 
-  /**
-   * Restaurar un cobro de alumno eliminado
-   * @param {number} id - ID del cobro
-   * @returns {Promise<boolean>} Resultado de la operación
-   */
+  /* ================== RESTORE ================== */
   static async restore(id) {
     const cobro = await CobroAlumno.scope('deleted').findByPk(id);
-    if (!cobro) {
-      return false;
-    }
-
+    if (!cobro) return false;
     await cobro.restore();
     return true;
   }
 
-  /**
-   * Calcular total de cobros por curso
-   * @param {number} cursoId - ID del curso
-   * @returns {Promise<number>} Total de cobros
-   */
+  /* ================== TOTAL x CURSO ================== */
   static async getTotalByCurso(cursoId) {
-    const result = await CobroAlumno.getTotalByCurso(cursoId);
-    return result || 0;
+    const total = await CobroAlumno.sum('monto', { where: { curso_id: parseInt(cursoId, 10) } });
+    return total || 0;
   }
 
-  /**
-   * Obtener estadísticas de cobros de alumnos
-   * @param {Object} filters - Filtros opcionales
-   * @returns {Promise<Object>} Estadísticas de cobros
-   */
+  /* ================== ESTADÍSTICAS ================== */
   static async getEstadisticas(filters = {}) {
-    const whereClause = {};
-    
-    if (filters.curso_id) {
-      whereClause.curso_id = filters.curso_id;
-    }
-
+    const where = {};
+    if (filters.curso_id) where.curso_id = parseInt(filters.curso_id, 10);
     if (filters.fecha_desde && filters.fecha_hasta) {
-      whereClause.fecha_creacion = {
-        [Op.between]: [filters.fecha_desde, filters.fecha_hasta]
-      };
+      where.fecha_creacion = { [Op.between]: [filters.fecha_desde, filters.fecha_hasta] };
     }
 
     const [totalCobros, montoTotal] = await Promise.all([
-      CobroAlumno.count({ where: whereClause }),
-      CobroAlumno.sum('monto', { where: whereClause })
+      CobroAlumno.count({ where }),
+      CobroAlumno.sum('monto', { where }),
     ]);
 
     return {
       total_cobros: totalCobros,
-      monto_total: montoTotal || 0
+      monto_total: montoTotal || 0,
     };
   }
 
-  /**
-   * Obtener cobros agrupados por curso
-   * @returns {Promise<Array>} Cobros agrupados por curso
-   */
+  /* ================== GROUP BY CURSO ================== */
   static async getGroupedByCurso() {
-    return await CobroAlumno.findAll({
+    return CobroAlumno.findAll({
       attributes: [
         'curso_id',
-        [require('sequelize').fn('COUNT', require('sequelize').col('id')), 'total_cobros'],
-        [require('sequelize').fn('SUM', require('sequelize').col('monto')), 'total_monto']
+        [fn('COUNT', col('CobroAlumno.id')), 'total_cobros'],
+        [fn('SUM', col('CobroAlumno.monto')), 'total_monto'],
       ],
       include: [
-        {
-          model: Curso,
-          as: 'curso',
-          attributes: ['id', 'nombre_curso', 'ano_escolar']
-        }
+        { model: Curso, as: 'curso', attributes: ['id', 'nombre_curso', 'ano_escolar'] },
       ],
-      group: ['curso_id'],
-      order: [[require('sequelize').fn('SUM', require('sequelize').col('monto')), 'DESC']]
+      group: ['CobroAlumno.curso_id', 'curso.id', 'curso.nombre_curso', 'curso.ano_escolar'],
+      order: [[fn('SUM', col('CobroAlumno.monto')), 'DESC']],
     });
   }
 
-  /**
-   * Crear cobros masivos para un curso
-   * @param {number} cursoId - ID del curso
-   * @param {Array} cobrosData - Array de datos de cobros
-   * @param {string} userId - ID del usuario que crea
-   * @returns {Promise<Array>} Cobros creados
-   */
+  /* ================== BULK ================== */
   static async createBulk(cursoId, cobrosData, userId) {
-    const cobrosWithAudit = cobrosData.map(cobro => ({
-      ...cobro,
-      curso_id: cursoId,
-      ...addCreateAudit(userId)
+    const cobrosWithAudit = cobrosData.map(c => ({
+      ...c,
+      curso_id: parseInt(cursoId, 10),
+      ...addCreateAudit(userId),
     }));
-
-    return await CobroAlumno.bulkCreate(cobrosWithAudit);
+    return CobroAlumno.bulkCreate(cobrosWithAudit);
   }
 }
 
 module.exports = CobroAlumnoService;
-
