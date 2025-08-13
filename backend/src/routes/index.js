@@ -10,7 +10,11 @@ const unifiedPaymentRoutes = require('./unifiedPaymentRoutes');
 const webhookRoutes = require('./webhookRoutes');
 const cargaMasivaRoutes = require('./cargaMasivaRoutes');
 const personasRoutes = require('./personasRoutes');
-const roleRoutes = require('./roleRoutes');     
+const roleRoutes = require('./roleRoutes');
+const profesoresRouter = require('./profesorRoutes');    
+const nivelesRouter = require('./nivelesRoutes');
+const cursosRoutes = require('./cursoRoutes'); 
+const alumnosRoutes = require('./alumnoRoutes');
 
 // Configurar rutas
 router.use('/auth', authRoutes);
@@ -21,7 +25,11 @@ router.use('/payments', unifiedPaymentRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/carga-masiva', cargaMasivaRoutes);
 router.use('/personas', personasRoutes);
-router.use('/roles', roleRoutes);  
+router.use('/roles', roleRoutes);
+router.use('/profesores', profesoresRouter)
+router.use('/niveles', nivelesRouter)
+router.use('/cursos', cursosRoutes);   
+router.use('/alumnos', alumnosRoutes);
 
 // Ruta de información del API
 router.get('/info', (req, res) => {

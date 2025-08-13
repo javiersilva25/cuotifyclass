@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { StatsGrid } from '../features/dashboard/components/StatsCard.jsx';
 import { CursosTable } from '../features/cursos/components/CursosTable.jsx';
-import { CursoForm } from '../features/cursos/components/CursoForm.jsx';
+import CursoForm from '../features/cursos/components/CursoForm.jsx';
 import { 
   useCursos, 
   useCursosFilter, 

@@ -1,8 +1,61 @@
+// src/features/apoderado/hooks/useApoderado.js
 import { useState, useEffect, useCallback } from 'react';
-import apoderadoClient, { paymentsAPI } from '../../../api/apoderado';
+import apoderadoClient, { paymentsAPI } from '@/api/apoderado';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 
-// Hook para autenticación de apoderados
+// ---------- helpers / adapters ----------
+const getArray = (resp) => {
+  const d = resp?.data ?? resp;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(d?.items)) return d.items;
+  return [];
+};
+
+const adaptHijo = (r = {}) => {
+  const nombre =
+    r.nombre_completo ||
+    [r.nombre, r.apellido, r.apellido_paterno, r.apellido_materno]
+      .map(s => (s || '').trim())
+      .filter(Boolean)
+      .join(' ') ||
+    r.persona_nombre ||
+    'Estudiante';
+
+  const cursoNombre =
+    r.curso?.nombre ||
+    r.curso_nombre ||
+    r.nombre_curso ||
+    (r.curso_id ? `Curso ${r.curso_id}` : 'Sin curso');
+
+  return {
+    id: r.id ?? r.alumno_id ?? r.usuario_id ?? null,
+    rut: r.rut ?? r.usuario_rut ?? null,
+    nombre_completo: nombre,
+    curso_id: r.curso_id ?? r.curso?.id ?? null,
+    curso_nombre: cursoNombre,
+    usuario_id: r.usuario_id ?? null,
+    curso: { id: r.curso?.id ?? r.curso_id ?? null, nombre: cursoNombre },
+  };
+};
+
+const adaptDeuda = (r = {}) => ({
+  id: r.id,
+  alumno_id: r.alumno_id ?? r.estudiante_id ?? r.hijo_id ?? null,
+  nombre: r.nombre ?? r.concepto ?? r.descripcion ?? 'Cuota',
+  monto: Number(r.monto ?? r.monto_total ?? r.total ?? 0),
+  fecha_limite: r.fecha_limite ?? r.vencimiento ?? r.fecha_vencimiento ?? null,
+});
+
+const adaptPago = (r = {}) => ({
+  id: r.id,
+  cuota: { nombre: r.cuota?.nombre ?? r.concepto ?? r.descripcion ?? 'Cuota' },
+  fecha_pago: r.fecha_pago ?? r.fecha ?? r.created_at ?? null,
+  monto_pagado: Number(r.monto_pagado ?? r.monto ?? r.total ?? 0),
+  metodo_pago: r.metodo_pago ?? r.gateway ?? r.pasarela ?? '—',
+  transaccion_id: r.transaccion_id ?? r.reference ?? r.order_id ?? r.id ?? '',
+});
+
+// ---------- auth (login apoderado) ----------
 export const useApoderadoAuth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -11,23 +64,28 @@ export const useApoderadoAuth = () => {
   const handleLogin = useCallback(async (credentials) => {
     setIsLoading(true);
     setError(null);
-    
     try {
       const response = await apoderadoClient.login(credentials);
-      
-      if (response.success) {
-        // Guardar datos del apoderado en el contexto de auth
-        const userData = {
-          ...response.data.apoderado,
-          token: response.data.token,
-          userType: 'apoderado'
-        };
-        
-        login(userData);
-        return { success: true, data: userData };
-      } else {
-        throw new Error(response.message || 'Error en el login');
-      }
+      if (!response?.success) throw new Error(response?.message || 'Error en el login');
+
+      const ap = response.data?.apoderado || {};
+      // Normalizamos para que el contexto SIEMPRE tenga .id y .token
+      const userData = {
+        id: ap.id ?? ap.apoderado_id ?? ap.rut ?? ap.usuario_id ?? null,
+        rut: ap.rut ?? ap.id ?? null,
+        nombre:
+          ap.nombre ||
+          ap.nombre_completo ||
+          [ap.nombres, ap.apellido_paterno, ap.apellido_materno]
+            .filter(Boolean).join(' ') ||
+          'Apoderado',
+        ...ap,
+        token: response.data?.token ?? null,
+        userType: 'apoderado',
+      };
+
+      login(userData);
+      return { success: true, data: userData };
     } catch (err) {
       setError(err.message);
       return { success: false, error: err.message };
@@ -36,14 +94,10 @@ export const useApoderadoAuth = () => {
     }
   }, [login]);
 
-  return {
-    handleLogin,
-    isLoading,
-    error,
-  };
+  return { handleLogin, isLoading, error };
 };
 
-// Hook para datos del apoderado
+// ---------- datos del apoderado ----------
 export const useApoderadoData = () => {
   const [profile, setProfile] = useState(null);
   const [hijos, setHijos] = useState([]);
@@ -53,18 +107,20 @@ export const useApoderadoData = () => {
   const [error, setError] = useState(null);
   const { user } = useAuth();
 
-  // Cargar perfil del apoderado
+  // id obligatorio; token opcional
+  const getAuth = () => {
+    const id = user?.id ?? user?.rut ?? null;
+    const token = user?.token ?? null;
+    return { id, token };
+  };
+
   const loadProfile = useCallback(async () => {
-    if (!user?.id || !user?.token) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
+    const { id, token } = getAuth();
+    if (!id) return; // no dispares error visual si aún no hay sesión
+    setIsLoading(true); setError(null);
     try {
-      const response = await apoderadoClient.getProfile(user.id, user.token);
-      if (response.success) {
-        setProfile(response.data);
-      }
+      const resp = await apoderadoClient.getProfile(id, token);
+      if (resp?.success) setProfile(resp.data ?? null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -72,71 +128,55 @@ export const useApoderadoData = () => {
     }
   }, [user]);
 
-  // Cargar hijos del apoderado
   const loadHijos = useCallback(async () => {
-    if (!user?.id || !user?.token) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
+    const { id, token } = getAuth();
+    if (!id) return;
+    setIsLoading(true); setError(null);
     try {
-      const response = await apoderadoClient.getHijos(user.id, user.token);
-      if (response.success) {
-        setHijos(response.data);
-      }
+      const resp = await apoderadoClient.getHijos(id, token);
+      setHijos(getArray(resp).map(adaptHijo));
     } catch (err) {
       setError(err.message);
+      setHijos([]);
     } finally {
       setIsLoading(false);
     }
   }, [user]);
 
-  // Cargar deudas pendientes
   const loadDeudasPendientes = useCallback(async () => {
-    if (!user?.id || !user?.token) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
+    const { id, token } = getAuth();
+    if (!id) return;
+    setIsLoading(true); setError(null);
     try {
-      const response = await apoderadoClient.getDeudasPendientes(user.id, user.token);
-      if (response.success) {
-        setDeudasPendientes(response.data);
-      }
+      const resp = await apoderadoClient.getDeudasPendientes(id, token);
+      setDeudasPendientes(getArray(resp).map(adaptDeuda));
     } catch (err) {
       setError(err.message);
+      setDeudasPendientes([]);
     } finally {
       setIsLoading(false);
     }
   }, [user]);
 
-  // Cargar historial de pagos
   const loadHistorialPagos = useCallback(async (limit = 50) => {
-    if (!user?.id || !user?.token) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
+    const { id, token } = getAuth();
+    if (!id) return;
+    setIsLoading(true); setError(null);
     try {
-      const response = await apoderadoClient.getHistorialPagos(user.id, user.token, limit);
-      if (response.success) {
-        setHistorialPagos(response.data);
-      }
+      const resp = await apoderadoClient.getHistorialPagos(id, token, limit);
+      setHistorialPagos(getArray(resp).map(adaptPago));
     } catch (err) {
       setError(err.message);
+      setHistorialPagos([]);
     } finally {
       setIsLoading(false);
     }
   }, [user]);
 
-  // Recargar todos los datos
   const refreshData = useCallback(async () => {
-    await Promise.all([
-      loadProfile(),
-      loadHijos(),
-      loadDeudasPendientes(),
-      loadHistorialPagos()
-    ]);
+    const { id } = getAuth();
+    if (!id) return;
+    await Promise.all([loadProfile(), loadHijos(), loadDeudasPendientes(), loadHistorialPagos()]);
   }, [loadProfile, loadHijos, loadDeudasPendientes, loadHistorialPagos]);
 
   return {
@@ -154,7 +194,7 @@ export const useApoderadoData = () => {
   };
 };
 
-// Hook para sistema de pagos unificado
+// ---------- pagos unificados ----------
 export const usePayments = () => {
   const [gateways, setGateways] = useState([]);
   const [recommendation, setRecommendation] = useState(null);
@@ -163,16 +203,11 @@ export const usePayments = () => {
   const [error, setError] = useState(null);
   const { user } = useAuth();
 
-  // Cargar pasarelas disponibles
   const loadGateways = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    
+    setIsLoading(true); setError(null);
     try {
-      const response = await paymentsAPI.getGateways();
-      if (response.success) {
-        setGateways(response.data);
-      }
+      const resp = await paymentsAPI.getGateways();
+      setGateways(getArray(resp) || resp?.data || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -180,91 +215,49 @@ export const usePayments = () => {
     }
   }, []);
 
-  // Obtener recomendación de pasarela
   const getRecommendation = useCallback(async (params = {}) => {
-    setIsLoading(true);
-    setError(null);
-    
+    setIsLoading(true); setError(null);
     try {
-      const response = await paymentsAPI.getRecommendation({
-        country: 'CL',
-        priority: 'cost',
-        ...params
-      });
-      if (response.success) {
-        setRecommendation(response.data);
-        return response.data;
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
+      const resp = await paymentsAPI.getRecommendation({ country: 'CL', priority: 'cost', ...params });
+      if (resp?.success) { setRecommendation(resp.data); return resp.data; }
+      return null;
+    } catch (err) { setError(err.message); return null; }
+    finally { setIsLoading(false); }
   }, []);
 
-  // Comparar costos de pasarelas
   const compareGateways = useCallback(async (amount) => {
-    setIsLoading(true);
-    setError(null);
-    
+    setIsLoading(true); setError(null);
     try {
-      const response = await paymentsAPI.compareGateways(amount);
-      if (response.success) {
-        setComparison(response.data);
-        return response.data;
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
+      const resp = await paymentsAPI.compareGateways(amount);
+      if (resp?.success) { setComparison(resp.data); return resp.data; }
+      return null;
+    } catch (err) { setError(err.message); return null; }
+    finally { setIsLoading(false); }
   }, []);
 
-  // Crear pago
   const createPayment = useCallback(async (paymentData) => {
-    if (!user?.id || !user?.token) {
-      throw new Error('Usuario no autenticado');
-    }
-    
-    setIsLoading(true);
-    setError(null);
-    
+    const id = user?.id ?? user?.rut ?? null;
+    const token = user?.token ?? null;
+    if (!id) throw new Error('Usuario no autenticado');
+    setIsLoading(true); setError(null);
     try {
-      const response = await paymentsAPI.createPayment(user.id, paymentData, user.token);
-      if (response.success) {
-        return response.data;
-      } else {
-        throw new Error(response.message || 'Error al crear pago');
-      }
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
+      const resp = await paymentsAPI.createPayment(id, paymentData, token);
+      if (resp?.success) return resp.data;
+      throw new Error(resp?.message || 'Error al crear pago');
+    } catch (err) { setError(err.message); throw err; }
+    finally { setIsLoading(false); }
   }, [user]);
 
-  // Probar configuraciones
   const testGateways = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    
+    setIsLoading(true); setError(null);
     try {
-      const response = await paymentsAPI.testGateways();
-      if (response.success) {
-        return response.data;
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
+      const resp = await paymentsAPI.testGateways();
+      return resp?.success ? resp.data : null;
+    } catch (err) { setError(err.message); return null; }
+    finally { setIsLoading(false); }
   }, []);
 
-  // Cargar datos iniciales
-  useEffect(() => {
-    loadGateways();
-  }, [loadGateways]);
+  useEffect(() => { loadGateways(); }, [loadGateways]);
 
   return {
     gateways,
@@ -279,4 +272,3 @@ export const usePayments = () => {
     testGateways,
   };
 };
-

@@ -1,12 +1,14 @@
-// controllers/tesoreroController.js
+// src/controllers/tesoreroController.js
 const TesoreroService = require('../services/tesoreroService');
 const ResponseHelper = require('../utils/responseHelper');
 const { validateData, tesoreroValidator } = require('../utils/validators');
 const Logger = require('../utils/logger');
 const { sequelize } = require('../config/database');
 
+const TESORERO_ROLE_ID = 2; // id del rol TESORERO en tu tabla roles
+
 class TesoreroController {
-  // ---- CRUD admin (sin cambios estructurales) ----
+  // ---- CRUD admin (igual que tenías) ----
   static async create(req, res) {
     try {
       const { isValid, errors, data } = validateData(tesoreroValidator, req.body);
@@ -88,21 +90,21 @@ class TesoreroController {
   }
 
   // ---- Consultas por RUT en persona_roles ----
-
   static async checkIsTesorero(req, res) {
     try {
       const rut = req.params.rut;
       const [rows] = await sequelize.query(
         `
         SELECT 1
-        FROM persona_roles pr
-        WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') = REPLACE(REPLACE(UPPER(:rut), '.', ''), '-', '')
-          AND pr.rol_id = 2
-          AND pr.activo = 1
-          AND pr.curso_id IS NOT NULL
-        LIMIT 1
+          FROM persona_roles pr
+         WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') =
+               REPLACE(REPLACE(UPPER(:rut),          '.', ''), '-', '')
+           AND pr.rol_id = :rolId
+           AND pr.activo = 1
+           AND pr.curso_id IS NOT NULL
+         LIMIT 1
         `,
-        { replacements: { rut } }
+        { replacements: { rut, rolId: TESORERO_ROLE_ID } }
       );
       return ResponseHelper.success(res, { rut_persona: rut, es_tesorero: !!rows?.[0] });
     } catch (error) {
@@ -136,13 +138,14 @@ class TesoreroController {
           c.ano_escolar  AS curso_ano_escolar
         FROM persona_roles pr
         JOIN cursos c ON c.id = pr.curso_id
-        WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') = REPLACE(REPLACE(UPPER(:rut), '.', ''), '-', '')
-          AND pr.rol_id = 2
+        WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') =
+              REPLACE(REPLACE(UPPER(:rut),          '.', ''), '-', '')
+          AND pr.rol_id = :rolId
           AND pr.activo = 1
           AND pr.curso_id IS NOT NULL
         LIMIT 1
         `,
-        { replacements: { rut } }
+        { replacements: { rut, rolId: TESORERO_ROLE_ID } }
       );
 
       const r = rows?.[0];
@@ -164,11 +167,12 @@ class TesoreroController {
     }
   }
 
-
-// GET /api/tesoreros/me
+  // GET /api/tesoreros/me  (usado por el alias /me/curso)
   static async getMyData(req, res) {
     try {
       const rut = req.rut_persona || req.user?.rut || req.user?.id;
+      console.log('[TESOREROS:ME] decoded user =>', req.user);
+      console.log('[TESOREROS:ME] rut usado    =>', rut);
       if (!rut) return ResponseHelper.unauthorized(res, 'Token inválido');
 
       const [rows] = await sequelize.query(
@@ -187,13 +191,14 @@ class TesoreroController {
         FROM persona_roles pr
         JOIN cursos c         ON c.id = pr.curso_id
         LEFT JOIN personas p  ON p.rut = pr.rut_persona
-        WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') = REPLACE(REPLACE(UPPER(:rut), '.', ''), '-', '')
-          AND pr.rol_id = 2
+        WHERE REPLACE(REPLACE(UPPER(pr.rut_persona), '.', ''), '-', '') =
+              REPLACE(REPLACE(UPPER(:rut),          '.', ''), '-', '')
+          AND pr.rol_id = :rolId
           AND pr.activo = 1
           AND pr.curso_id IS NOT NULL
         LIMIT 1
         `,
-        { replacements: { rut } }
+        { replacements: { rut, rolId: TESORERO_ROLE_ID } }
       );
 
       const r = rows?.[0];
@@ -202,20 +207,17 @@ class TesoreroController {
       return ResponseHelper.success(res, {
         rut_persona: r.rut_persona,
         fecha_asignacion: r.fecha_asignacion || null,
-        // Objeto curso con las claves que usa tu UI
         curso: {
           id: r.curso_id,
           nombre_curso: r.curso_nombre_curso,
           nivel_id: r.curso_nivel_id,
           ano_escolar: r.curso_ano_escolar,
         },
-        // Compatibilidad: algunos componentes usan "usuario"
         usuario: r.persona_rut ? {
           rut: r.persona_rut,
           nombres: r.persona_nombres,
           apellidos: r.persona_apellidos,
         } : null,
-        // También dejamos "persona" por si ya lo estás usando
         persona: r.persona_rut ? {
           rut: r.persona_rut,
           nombres: r.persona_nombres,
@@ -228,8 +230,18 @@ class TesoreroController {
     }
   }
 
+  // ---- Aliases para casar con las rutas nuevas ----
+  static async getMiCurso(req, res) {
+    // /api/tesoreros/me/curso
+    return TesoreroController.getMyData(req, res);
+  }
 
-  // ---- mantenimiento ----
+  static async getCursoAsignadoByRut(req, res) {
+    // /api/tesoreros/:rut/curso
+    return TesoreroController.getCursoAsignado(req, res);
+  }
+
+  // ---- mantenimiento (igual que tenías) ----
   static async update(req, res) {
     try {
       const { id } = req.params;

@@ -15,25 +15,43 @@ const TesoreroDashboard = () => {
   const [tesorero, setTesorero] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [estadisticas, setEstadisticas] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const tes = await tesoreroAPI.getMyData(); // ahora devuelve el objeto directo
+        const me = await tesoreroAPI.getMyData();
         if (!mounted) return;
-        setTesorero(tes || null);
 
-        if (tes?.curso?.id) {
+        console.debug('[TESORERO] /me =>', me);
+
+        // Acepta { curso: { id } } o { curso_id } como válidos
+        const cursoId =
+          me?.curso?.id ??
+          me?.curso_id ??
+          me?.curso?.curso_id ?? null;
+
+        setTesorero(me || null);
+
+        if (cursoId) {
           const [r1, r2] = await Promise.all([
-            tesoreroAPI.getResumenCurso(),               // -> { data: {...} }
-            tesoreroAPI.getEstadisticasFinancierasCurso()// -> { data: {...} }
+            tesoreroAPI.getResumenCurso(),               // { data: {...} }
+            tesoreroAPI.getEstadisticasFinancierasCurso()// { data: {...} }
           ]);
           if (!mounted) return;
           setResumen(r1?.data || null);
           setEstadisticas(r2?.data || null);
+        } else {
+          setError('No estás asignado como tesorero de ningún curso.');
         }
-      } catch {
+      } catch (e) {
+        // Muestra el mensaje del backend si vino 404
+        const msg = e?.response?.data?.message || e?.message || 'Error al cargar datos';
+        console.warn('[TESORERO] /me error =>', msg);
+        setError(msg);
         setTesorero(null);
       } finally {
         if (mounted) setLoading(false);
@@ -46,18 +64,26 @@ const TesoreroDashboard = () => {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
           <p className="mt-4 text-gray-600">Cargando dashboard...</p>
         </div>
       </div>
     );
   }
 
-  if (!tesorero?.curso?.id) {
+  const curso = tesorero?.curso ?? (tesorero?.curso_id ? {
+    id: tesorero.curso_id,
+    nombre_curso: tesorero.curso_nombre || 'Curso',
+    nivel_id: tesorero.nivel_id ?? undefined,
+    ano_escolar: tesorero.ano_escolar ?? undefined
+  } : null);
+
+  // Si no hay curso asignado o vino error, muestra tarjeta informativa
+  if (!curso?.id) {
     return (
       <>
         <Navbar />
-        <div className="flex items-center justify-center min-h-screen">
+        <div className="flex items-center justify-center min-h-screen px-4">
           <Card className="w-full max-w-md">
             <CardHeader className="text-center">
               <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
@@ -66,35 +92,39 @@ const TesoreroDashboard = () => {
                 No tienes un curso asignado como tesorero. Contacta al administrador para obtener acceso.
               </CardDescription>
             </CardHeader>
+            {error && (
+              <CardContent>
+                <p className="text-center text-sm text-red-600">{error}</p>
+              </CardContent>
+            )}
           </Card>
         </div>
       </>
     );
   }
 
-  const curso = tesorero.curso;
-  const usuario = tesorero.persona || tesorero.usuario || {};
+  const usuario = tesorero?.persona || tesorero?.usuario || {};
 
   return (
-    <div className="space-y-6">
+    <>
+          <Navbar />
+    <div className="space-y-6 p-4 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard Tesorero</h1>
-          <p className="text-muted-foreground">
-            Gestión financiera del curso {curso.nombre_curso}
-          </p>
+          <p className="text-muted-foreground">Gestión financiera del curso {curso.nombre_curso}</p>
         </div>
         <div className="flex items-center space-x-2">
           <Badge variant="secondary" className="flex items-center space-x-1">
             <BookOpen className="h-4 w-4" />
             <span>{curso.nombre_curso}</span>
           </Badge>
-          <Badge variant="outline">Año {curso.ano_escolar}</Badge>
+          {curso.ano_escolar && <Badge variant="outline">Año {curso.ano_escolar}</Badge>}
         </div>
       </div>
 
-      {/* Información del Tesorero */}
+      {/* Info Tesorero */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
@@ -106,7 +136,9 @@ const TesoreroDashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Nombre</p>
-              <p className="text-lg font-semibold">{[usuario.nombres, usuario.apellidos].filter(Boolean).join(' ')}</p>
+              <p className="text-lg font-semibold">
+                {[usuario.nombres, usuario.apellidos].filter(Boolean).join(' ') || '—'}
+              </p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Email</p>
@@ -114,13 +146,13 @@ const TesoreroDashboard = () => {
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Fecha de Asignación</p>
-              <p className="text-lg">{formatDate(tesorero.fecha_asignacion)}</p>
+              <p className="text-lg">{formatDate(tesorero?.fecha_asignacion)}</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Estadísticas Principales */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -179,7 +211,7 @@ const TesoreroDashboard = () => {
         </Card>
       </div>
 
-      {/* Acciones Rápidas */}
+      {/* Acciones */}
       <Card>
         <CardHeader>
           <CardTitle>Acciones Rápidas</CardTitle>
@@ -222,7 +254,7 @@ const TesoreroDashboard = () => {
         </CardContent>
       </Card>
 
-      {/* Información del Curso */}
+      {/* Info Curso */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
@@ -238,11 +270,11 @@ const TesoreroDashboard = () => {
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Nivel</p>
-              <p className="text-lg">{curso.nivel_id}</p>
+              <p className="text-lg">{curso.nivel_id ?? '—'}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Año Escolar</p>
-              <p className="text-lg">{curso.ano_escolar}</p>
+              <p className="text-lg">{curso.ano_escolar ?? '—'}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Total Alumnos</p>
@@ -252,7 +284,7 @@ const TesoreroDashboard = () => {
         </CardContent>
       </Card>
 
-      {/* Resumen Financiero */}
+      {/* Resumen financiero */}
       {estadisticas && (
         <Card>
           <CardHeader>
@@ -288,6 +320,7 @@ const TesoreroDashboard = () => {
         </Card>
       )}
     </div>
+    </>
   );
 };
 

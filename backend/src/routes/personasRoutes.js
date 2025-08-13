@@ -39,4 +39,55 @@ router.get('/buscar', async (req, res) => {
   }
 });
 
+// Actualizar persona por RUT
+// routes/personas.js  (añade/ajusta esta ruta)
+router.put('/:rut', async (req, res) => {
+  try {
+    const { rut } = req.params;
+    const {
+      nombres = '',
+      apellidoPaterno = null,
+      apellidoMaterno = null,
+      email = '',
+      activo = 1,   // 1/0
+    } = req.body || {};
+
+    const [result] = await sequelize.query(
+      `
+      UPDATE personas
+      SET
+        nombres          = :nombres,
+        apellido_paterno = :ap,
+        apellido_materno = :am,
+        email            = :email,
+        activo           = :activo,
+        updated_at       = NOW()
+      WHERE REPLACE(REPLACE(REPLACE(rut,'.',''),'-',''),' ','') =
+            REPLACE(REPLACE(REPLACE(:rut,'.',''),'-',''),' ','')
+      `,
+      {
+        replacements: {
+          nombres,
+          ap: apellidoPaterno || null,
+          am: apellidoMaterno || null,
+          email,
+          activo: activo ? 1 : 0,
+          rut
+        }
+      }
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ success: false, message: 'Persona no encontrada' });
+    }
+
+    return res.json({ success: true, message: 'Actualizado' });
+  } catch (e) {
+    console.error('PUT /api/personas/:rut error:', e.sqlMessage || e.message);
+    return res.status(500).json({ success: false, message: 'Error actualizando persona' });
+  }
+});
+
+
+
 module.exports = router;

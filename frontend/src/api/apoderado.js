@@ -1,209 +1,113 @@
+// src/api/apoderado.js
 import apiClient from './client';
 
-// URL base del backend v4.1.0
-const API_BASE_URL = 'http://localhost:3000';
+const authHeaders = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
 
-// Cliente API específico para apoderados
+// Un solo cliente para todo
 const apoderadoClient = {
-  // Autenticación de apoderados
-  login: async (credentials) => {
+  // --- Autenticación (si aplica) ---
+  async login({ rut, password }) {
+    const { data } = await apiClient.post('/api/auth/apoderado/login', { rut, password });
+    return data; // { success, data: { apoderado, token } }
+  },
+
+  // --- Listas para combos / CRUD básico (lo que ya usabas) ---
+  async getAll() {
+    const { data } = await apiClient.get('/api/apoderados');
+    // backend puede devolver { success, data } ó un array directo
+    return data?.data ?? data ?? [];
+  },
+
+  async getById(id, token) {
+    const { data } = await apiClient.get(`/api/apoderados/${id}`, {
+      headers: authHeaders(token),
+    });
+    return data?.data ?? data ?? null;
+  },
+
+  // --- Datos para el dashboard ---
+  async getProfile(apoderadoId, token) {
+    // Puedes reutilizar getById si prefieres
+    const { data } = await apiClient.get(`/api/apoderados/${apoderadoId}`, {
+      headers: authHeaders(token),
+    });
+    return data;
+  },
+
+  async getHijos(apoderadoId, token) {
+    // Ruta “oficial”
     try {
-      const response = await fetch(`${API_BASE_URL}/api/apoderados/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(credentials),
+      const { data } = await apiClient.get(`/api/apoderados/${apoderadoId}/hijos`, {
+        headers: authHeaders(token),
       });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Error en el login');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error en login de apoderado:', error);
-      throw error;
+      return data;
+    } catch (_) {
+      // Fallback a la que ya tienes en backend
+      const { data } = await apiClient.get(`/api/alumnos/apoderado/${apoderadoId}`, {
+        headers: authHeaders(token),
+      });
+      return data;
     }
   },
 
-  // Obtener perfil del apoderado
-  getProfile: async (apoderadoId, token) => {
+  async getDeudasPendientes(apoderadoId, token) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/apoderados/${apoderadoId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const { data } = await apiClient.get(`/api/apoderados/${apoderadoId}/deudas`, {
+        headers: authHeaders(token),
       });
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener perfil');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener perfil:', error);
-      throw error;
+      return data;
+    } catch (_) {
+      const { data } = await apiClient.get('/api/deudas', {
+        headers: authHeaders(token),
+        params: { apoderado_id: apoderadoId, estado: 'pendiente' },
+      });
+      return data;
     }
   },
 
-  // Obtener hijos del apoderado
-  getHijos: async (apoderadoId, token) => {
+  async getHistorialPagos(apoderadoId, token, limit = 50) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/apoderados/${apoderadoId}/hijos`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const { data } = await apiClient.get(`/api/apoderados/${apoderadoId}/pagos`, {
+        headers: authHeaders(token),
+        params: { limit },
       });
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener hijos');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener hijos:', error);
-      throw error;
-    }
-  },
-
-  // Obtener deudas pendientes consolidadas
-  getDeudasPendientes: async (apoderadoId, token) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/apoderados/${apoderadoId}/deudas-pendientes`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      return data;
+    } catch (_) {
+      const { data } = await apiClient.get('/api/pagos', {
+        headers: authHeaders(token),
+        params: { apoderado_id: apoderadoId, limit },
       });
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener deudas pendientes');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener deudas pendientes:', error);
-      throw error;
-    }
-  },
-
-  // Obtener historial de pagos
-  getHistorialPagos: async (apoderadoId, token, limit = 50) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/apoderados/${apoderadoId}/history?limit=${limit}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener historial de pagos');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener historial de pagos:', error);
-      throw error;
+      return data;
     }
   },
 };
 
-// API del Sistema Unificado de Pagos
+// ——— Pasarelas de pago (lo que ya usabas en el dashboard) ———
 export const paymentsAPI = {
-  // Obtener pasarelas disponibles
-  getGateways: async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/gateways`);
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener pasarelas');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener pasarelas:', error);
-      throw error;
-    }
+  async getGateways() {
+    const { data } = await apiClient.get('/api/payments/gateways');
+    return data;
   },
-
-  // Obtener recomendación de pasarela
-  getRecommendation: async (params = {}) => {
-    try {
-      const queryParams = new URLSearchParams(params);
-      const response = await fetch(`${API_BASE_URL}/api/payments/gateways/recommend?${queryParams}`);
-      
-      if (!response.ok) {
-        throw new Error('Error al obtener recomendación');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al obtener recomendación:', error);
-      throw error;
-    }
+  async getRecommendation(params) {
+    const { data } = await apiClient.get('/api/payments/recommend', { params });
+    return data;
   },
-
-  // Comparar costos de pasarelas
-  compareGateways: async (amount) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/gateways/compare?amount=${amount}`);
-      
-      if (!response.ok) {
-        throw new Error('Error al comparar pasarelas');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al comparar pasarelas:', error);
-      throw error;
-    }
+  async compareGateways(amount) {
+    const { data } = await apiClient.get('/api/payments/compare', { params: { amount } });
+    return data;
   },
-
-  // Crear pago unificado
-  createPayment: async (apoderadoId, paymentData, token) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/apoderados/${apoderadoId}/create`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(paymentData),
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Error al crear pago');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al crear pago:', error);
-      throw error;
-    }
+  async createPayment(apoderadoId, payload, token) {
+    const { data } = await apiClient.post(
+      '/api/payments/create',
+      { apoderado_id: apoderadoId, ...payload },
+      { headers: authHeaders(token) }
+    );
+    return data;
   },
-
-  // Probar configuraciones de pasarelas
-  testGateways: async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/gateways/test`);
-      
-      if (!response.ok) {
-        throw new Error('Error al probar pasarelas');
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('Error al probar pasarelas:', error);
-      throw error;
-    }
+  async testGateways() {
+    const { data } = await apiClient.get('/api/payments/test');
+    return data;
   },
 };
 
 export default apoderadoClient;
-
