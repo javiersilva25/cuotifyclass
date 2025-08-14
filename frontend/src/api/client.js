@@ -29,11 +29,21 @@ const setAuthToken = (token) => {
 const getAuthHeaders = () => {
   const token = getAuthToken();
   const headers = { ...DEFAULT_HEADERS };
-  
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  
+
+  // —— x-user-id desde el usuario guardado ——
+  let userId = null;
+  try {
+    const saved = localStorage.getItem(AUTH_CONFIG.USER_KEY);
+    userId = saved ? JSON.parse(saved)?.id : null; // { id, ... }
+  } catch (_) {}
+
+  // Fallbacks (opcional)
+  if (!userId) userId = localStorage.getItem('userId'); // si lo guardas así en algún lado
+  if (!userId && (import.meta?.env?.MODE !== 'production')) userId = 1; // fallback de desarrollo
+
+  if (userId) headers['x-user-id'] = String(userId);
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   return headers;
 };
 

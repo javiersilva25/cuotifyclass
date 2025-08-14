@@ -1,8 +1,9 @@
+// src/features/cobros/components/CobrosTable.jsx
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Search, Filter, Plus, MoreHorizontal, Edit, Trash2, Eye, RefreshCw,
-  Download, Upload, SortAsc, SortDesc, DollarSign, Calendar, CreditCard,
+import {
+  Search, Filter, Plus, MoreHorizontal, Edit, Eye, RefreshCw,
+  Download, Upload, SortAsc, SortDesc, Calendar, CreditCard,
   CheckCircle, Clock, AlertTriangle, XCircle, User, Users, Receipt
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -18,11 +19,11 @@ import { cn } from '../../../lib/utils';
 /* ========================= Helpers UI ========================= */
 
 const formatCurrency = (amount) =>
-  new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0 }).format(Number(amount||0));
+  new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0 }).format(Number(amount || 0));
 
 const formatDate = (dateString) => (!dateString ? '-' : new Date(dateString).toLocaleDateString('es-CL'));
 
-const titleCaseEstado = (v='') => {
+const titleCaseEstado = (v = '') => {
   const m = String(v).toLowerCase();
   if (m === 'pendiente') return 'Pendiente';
   if (m === 'pagado') return 'Pagado';
@@ -32,44 +33,40 @@ const titleCaseEstado = (v='') => {
   return v || 'Pendiente';
 };
 
-const getEstadoColor = (estado) => {
-  const colors = {
-    'Pendiente': 'bg-yellow-100 text-yellow-700 border-yellow-200',
-    'Pagado': 'bg-green-100 text-green-700 border-green-200',
-    'Vencido': 'bg-red-100 text-red-700 border-red-200',
-    'Por Vencer': 'bg-blue-100 text-blue-700 border-blue-200',
-    'Cancelado': 'bg-gray-100 text-gray-700 border-gray-200',
-  };
-  return colors[estado] || 'bg-gray-100 text-gray-700 border-gray-200';
-};
+const getEstadoColor = (estado) => ({
+  'Pendiente': 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  'Pagado': 'bg-green-100 text-green-700 border-green-200',
+  'Vencido': 'bg-red-100 text-red-700 border-red-200',
+  'Por Vencer': 'bg-blue-100 text-blue-700 border-blue-200',
+  'Cancelado': 'bg-gray-100 text-gray-700 border-gray-200',
+}[estado] || 'bg-gray-100 text-gray-700 border-gray-200');
 
-const getEstadoIcon = (estado) => {
-  const icons = { 'Pendiente': Clock, 'Pagado': CheckCircle, 'Vencido': AlertTriangle, 'Por Vencer': Calendar, 'Cancelado': XCircle };
-  return icons[estado] || Clock;
-};
+const getEstadoIcon = (estado) =>
+  ({ 'Pendiente': Clock, 'Pagado': CheckCircle, 'Vencido': AlertTriangle, 'Por Vencer': Calendar, 'Cancelado': XCircle }[estado] || Clock);
 
-const getTipoColor = (tipo) => {
-  const colors = { 'General': 'bg-purple-100 text-purple-700 border-purple-200', 'Alumno': 'bg-blue-100 text-blue-700 border-blue-200' };
-  return colors[tipo] || 'bg-gray-100 text-gray-700 border-gray-200';
-};
+const getTipoColor = (tipo) =>
+  ({ 'General': 'bg-purple-100 text-purple-700 border-purple-200', 'Alumno': 'bg-blue-100 text-blue-700 border-blue-200' }[tipo]
+   || 'bg-gray-100 text-gray-700 border-gray-200');
 
 const daysBetweenToday = (dateStr) => {
   if (!dateStr) return null;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const target = new Date(dateStr); target.setHours(0,0,0,0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
   const diff = target.getTime() - today.getTime();
   return Math.round(diff / (1000 * 60 * 60 * 24));
 };
 
-/* ========================= Adaptador de filas =========================
-   Normaliza lo que venga del backend (cobros_alumnos, joins, etc.) a la
-   estructura que la tabla espera.
-====================================================================== */
+/* ========================= Adaptador de filas ========================= */
 
 const adaptCobro = (r = {}) => {
   const concepto = r.concepto ?? r.nombre ?? r.titulo ?? 'Cobro';
   const descripcion = r.descripcion ?? r.detalle ?? '';
-  const categoria = r.categoria ?? r.tipo ?? 'Otros';
+  const categoria =
+    r.categoria?.nombre ??
+    r.categoria_nombre ??
+    r.categoria ??
+    (r.categoria_id != null ? String(r.categoria_id) : 'Otros');
+
   const numero_comprobante = r.numero_comprobante ?? r.comprobante ?? '';
   const fecha_emision = r.fecha_emision ?? r.emision ?? r.created_at ?? null;
   const fecha_vencimiento = r.fecha_vencimiento ?? r.vencimiento ?? null;
@@ -95,20 +92,14 @@ const adaptCobro = (r = {}) => {
   const metodo_pago = r.metodo_pago ?? r.metodo ?? null;
   const observaciones = r.observaciones ?? r.obs ?? '';
 
-  // Estado: usar el del backend si existe; si no, derivar
   let estado = titleCaseEstado(r.estado);
   if (!['Pendiente', 'Pagado', 'Vencido', 'Por Vencer', 'Cancelado'].includes(estado)) {
     if (r.cancelado) estado = 'Cancelado';
     else if (monto_pagado >= monto && monto > 0) estado = 'Pagado';
     else {
       const d = daysBetweenToday(fecha_vencimiento);
-      if (d !== null) {
-        if (d < 0) estado = 'Vencido';
-        else if (d <= 3) estado = 'Por Vencer';
-        else estado = 'Pendiente';
-      } else {
-        estado = 'Pendiente';
-      }
+      if (d !== null) estado = d < 0 ? 'Vencido' : d <= 3 ? 'Por Vencer' : 'Pendiente';
+      else estado = 'Pendiente';
     }
   }
 
@@ -147,7 +138,7 @@ function CobrosFilters({ filters, onFilterChange, onReset, categorias = [], meto
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          {/* Búsqueda */}
+          {/* Buscar */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">Buscar</label>
             <div className="relative">
@@ -228,7 +219,7 @@ function CobrosFilters({ filters, onFilterChange, onReset, categorias = [], meto
             </Select>
           </div>
 
-          {/* Fecha desde / hasta */}
+          {/* Fechas */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">Fecha Desde</label>
             <Input type="date" value={filters.fecha_desde || ''} onChange={(e) => onFilterChange('fecha_desde', e.target.value)} />
@@ -276,7 +267,6 @@ function CobrosFilters({ filters, onFilterChange, onReset, categorias = [], meto
 
 function CobroDetails({ cobro, isOpen, onClose }) {
   if (!cobro) return null;
-
   const diasVencimiento = daysBetweenToday(cobro.fecha_vencimiento);
   const EstadoIcon = getEstadoIcon(cobro.estado);
 
@@ -285,7 +275,7 @@ function CobroDetails({ cobro, isOpen, onClose }) {
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            <div className={cn("p-2 rounded-lg", getEstadoColor(cobro.estado))}>
+            <div className={cn('p-2 rounded-lg', getEstadoColor(cobro.estado))}>
               <EstadoIcon className="w-5 h-5" />
             </div>
             <div>
@@ -372,13 +362,14 @@ function CobroDetails({ cobro, isOpen, onClose }) {
                 <p className="text-sm text-gray-600">Fecha de Vencimiento</p>
                 <div className="flex items-center gap-2">
                   <p className="font-medium">{formatDate(cobro.fecha_vencimiento)}</p>
-                  {diasVencimiento !== null && !['Pagado', 'Cancelado'].includes(cobro.estado) && (
-                    <Badge variant={diasVencimiento < 0 ? 'destructive' : diasVencimiento <= 3 ? 'secondary' : 'outline'}>
-                      {diasVencimiento < 0 ? `${Math.abs(diasVencimiento)} días vencido` :
-                        diasVencimiento === 0 ? 'Vence hoy' :
-                        `${diasVencimiento} días restantes`}
-                    </Badge>
-                  )}
+                  {(() => {
+                    const d = daysBetweenToday(cobro.fecha_vencimiento);
+                    return d !== null && !['Pagado', 'Cancelado'].includes(cobro.estado) ? (
+                      <Badge variant={d < 0 ? 'destructive' : d <= 3 ? 'secondary' : 'outline'}>
+                        {d < 0 ? `${Math.abs(d)} días vencido` : d === 0 ? 'Vence hoy' : `${d} días restantes`}
+                      </Badge>
+                    ) : null;
+                  })()}
                 </div>
               </div>
               {cobro.metodo_pago && (
@@ -424,16 +415,25 @@ export function CobrosTable({
   const [selectedCobro, setSelectedCobro] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
 
-  // Normalizar filas una sola vez
-  const rows = useMemo(() => (cobros || []).map(adaptCobro), [cobros]);
+  // Acepta array o { items } o { rows }
+  const rawList = useMemo(() => {
+    if (Array.isArray(cobros)) return cobros;
+    if (Array.isArray(cobros?.items)) return cobros.items;
+    if (Array.isArray(cobros?.rows)) return cobros.rows;
+    if (Array.isArray(cobros?.data?.items)) return cobros.data.items;
+    return [];
+  }, [cobros]);
+
+  // Normalizar filas
+  const rows = useMemo(() => rawList.map(adaptCobro), [rawList]);
 
   // Valores únicos para filtros
   const categorias = useMemo(
-    () => [...new Set(rows.map(c => c.categoria).filter(Boolean))].sort(),
+    () => [...new Set(rows.map((c) => c.categoria).filter((x) => x !== undefined && x !== null && x !== ''))].sort(),
     [rows]
   );
   const metodosPago = useMemo(
-    () => [...new Set(rows.map(c => c.metodo_pago).filter(Boolean))].sort(),
+    () => [...new Set(rows.map((c) => c.metodo_pago).filter(Boolean))].sort(),
     [rows]
   );
 
@@ -570,7 +570,7 @@ export function CobrosTable({
                           <TableCell>
                             <div className="space-y-1">
                               <p className="text-sm font-medium">{formatDate(c.fecha_vencimiento)}</p>
-                              {dias !== null && !['Pagado','Cancelado'].includes(c.estado) && (
+                              {dias !== null && !['Pagado', 'Cancelado'].includes(c.estado) && (
                                 <Badge
                                   variant={dias < 0 ? 'destructive' : dias <= 3 ? 'secondary' : 'outline'}
                                   className="text-xs"
@@ -583,7 +583,7 @@ export function CobrosTable({
 
                           <TableCell>
                             {c.metodo_pago ? (
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-1">{/* <- fix: items-center */}
                                 <CreditCard className="w-3 h-3 text-gray-500" />
                                 <span className="text-sm">{c.metodo_pago}</span>
                               </div>
@@ -605,12 +605,12 @@ export function CobrosTable({
                                   <Edit className="w-4 h-4 mr-2" /> Editar
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
-                                {(['Pendiente','Vencido','Por Vencer'].includes(c.estado)) && (
+                                {(['Pendiente', 'Vencido', 'Por Vencer'].includes(c.estado)) && (
                                   <DropdownMenuItem onClick={() => onMarcarPagado?.(c)} className="text-green-600">
                                     <CheckCircle className="w-4 h-4 mr-2" /> Marcar como Pagado
                                   </DropdownMenuItem>
                                 )}
-                                {(!['Cancelado','Pagado'].includes(c.estado)) && (
+                                {(!['Cancelado', 'Pagado'].includes(c.estado)) && (
                                   <DropdownMenuItem onClick={() => onCancelarCobro?.(c.id)} className="text-red-600">
                                     <XCircle className="w-4 h-4 mr-2" /> Cancelar
                                   </DropdownMenuItem>

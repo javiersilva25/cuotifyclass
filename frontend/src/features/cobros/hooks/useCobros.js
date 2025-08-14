@@ -8,8 +8,15 @@ import cobrosAlumnosAPI from '../../../api/cobrosAlumnos';
    Normalización y helpers
 ============================================================================ */
 
-const pickArray = (resp) =>
-  resp?.data?.data ?? resp?.data?.cobros ?? resp?.data?.cobrosAlumnos ?? resp?.data ?? [];
+// 🔧 Soporta payload directo (dd) y también envoltorios comunes
+const pickArray = (resp) => {
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp?.items)) return resp.items;
+  if (Array.isArray(resp?.rows)) return resp.rows;
+  if (Array.isArray(resp?.data?.items)) return resp.data.items;
+  if (Array.isArray(resp?.data)) return resp.data;
+  return [];
+};
 
 const safeDate = (d) => (d ? new Date(d) : null);
 
@@ -28,6 +35,14 @@ const deriveEstado = (item) => {
 const normalizeGeneral = (raw) => {
   const estado = deriveEstado(raw);
   const monto = raw.monto_total ?? raw.monto ?? 0;
+
+  // Nombre de categoría si viene como objeto o string; si no, muestra id
+  const categoriaName =
+    raw.categoria?.nombre ??
+    raw.categoria_nombre ??
+    (typeof raw.categoria === 'string' ? raw.categoria : null) ??
+    (raw.categoria_id != null ? `#${raw.categoria_id}` : 'Otros');
+
   return {
     id: raw.id,
     curso_id: raw.curso_id ?? null,
@@ -41,7 +56,7 @@ const normalizeGeneral = (raw) => {
     numero_comprobante: raw.numero_comprobante ?? null,
     observaciones: raw.observaciones ?? null,
     tipo_cobro: 'General',
-    categoria: raw.categoria ?? 'Otros',
+    categoria: categoriaName,
     alumno_id: null,
     alumno_nombre: null,
     apoderado_nombre: null,
@@ -63,6 +78,13 @@ const normalizeGeneral = (raw) => {
 const normalizeAlumno = (raw) => {
   const estado = deriveEstado(raw);
   const monto = raw.monto ?? raw.monto_total ?? 0;
+
+  const categoriaName =
+    raw.categoria?.nombre ??
+    raw.categoria_nombre ??
+    (typeof raw.categoria === 'string' ? raw.categoria : null) ??
+    (raw.categoria_id != null ? `#${raw.categoria_id}` : 'Otros');
+
   return {
     id: raw.id,
     curso_id: raw.curso_id ?? raw.alumno?.curso_id ?? null,
@@ -76,7 +98,7 @@ const normalizeAlumno = (raw) => {
     numero_comprobante: raw.numero_comprobante ?? null,
     observaciones: raw.observaciones ?? null,
     tipo_cobro: 'Alumno',
-    categoria: raw.categoria ?? 'Otros',
+    categoria: categoriaName,
     alumno_id: raw.alumno_id ?? raw.alumno?.id ?? null,
     alumno_nombre: raw.alumno_nombre ?? raw.alumno?.nombre_completo ?? null,
     apoderado_nombre:
@@ -98,28 +120,33 @@ const normalizeAlumno = (raw) => {
 
 const pickClient = (tipo) => (tipo === 'Alumno' ? cobrosAlumnosAPI : cobrosAPI);
 
+// 🔧 Mapea el form al backend (usa categoria_id)
 const mapFormToBackend = (form) => {
+  const categoria_id =
+    form.categoria_id != null
+      ? Number(form.categoria_id)
+      : (typeof form.categoria === 'number' ? form.categoria : undefined);
+
   if (form.tipo_cobro === 'Alumno') {
     return {
       concepto: form.concepto,
       descripcion: form.descripcion,
       monto: Number(form.monto),
       alumno_id: Number(form.alumno_id),
-      categoria: form.categoria,
+      categoria_id,
       fecha_emision: form.fecha_emision,
       fecha_vencimiento: form.fecha_vencimiento,
       numero_comprobante: form.numero_comprobante || undefined,
       observaciones: form.observaciones || undefined,
-      // curso_id opcional; el backend puede inferirlo desde el alumno
       ...(form.curso_id ? { curso_id: Number(form.curso_id) } : {}),
     };
   }
-  // GENERAL: importante enviar curso_id
+  // GENERAL
   return {
     concepto: form.concepto,
     descripcion: form.descripcion,
     monto_total: Number(form.monto),
-    categoria: form.categoria,
+    categoria_id,
     fecha_emision: form.fecha_emision,
     fecha_vencimiento: form.fecha_vencimiento,
     numero_comprobante: form.numero_comprobante || undefined,
@@ -146,6 +173,7 @@ export const useCobros = () => {
       setIsLoading(true);
       setError(null);
       try {
+        // ⚠️ Estos ya devuelven el payload directo (por dd)
         const [genResp, aluResp] = await Promise.all([
           cobrosAPI.getAll({ limit: 500, ...params }),
           cobrosAlumnosAPI.getAll({ limit: 500, ...params }),
@@ -154,7 +182,9 @@ export const useCobros = () => {
         const generales = pickArray(genResp).map(normalizeGeneral);
         const porAlumno = pickArray(aluResp).map(normalizeAlumno);
 
-        const merged = [...generales, ...porAlumno].sort((a, b) => toTime(b.fecha_emision) - toTime(a.fecha_emision));
+        const merged = [...generales, ...porAlumno].sort(
+          (a, b) => toTime(b.fecha_emision) - toTime(a.fecha_emision)
+        );
 
         setCobros(merged);
         setLastUpdated(new Date());
@@ -178,9 +208,12 @@ export const useCobros = () => {
 
     try {
       const resp = await client.create(body);
-      const created = resp?.data?.data ?? resp?.data;
+      // ⚠️ resp YA es el objeto creado (no resp.data.data)
+      const created = resp;
       const normalized =
-        formData.tipo_cobro === 'Alumno' ? normalizeAlumno(created) : normalizeGeneral(created);
+        formData.tipo_cobro === 'Alumno'
+          ? normalizeAlumno(created)
+          : normalizeGeneral(created);
 
       setCobros((prev) => [normalized, ...prev]);
       toast.success('Cobro creado exitosamente', { description: normalized.concepto });
@@ -198,9 +231,12 @@ export const useCobros = () => {
 
     try {
       const resp = await client.update(id, body);
-      const updated = resp?.data?.data ?? resp?.data;
+      // ⚠️ resp YA es el objeto actualizado
+      const updated = resp;
       const normalized =
-        formData.tipo_cobro === 'Alumno' ? normalizeAlumno(updated) : normalizeGeneral(updated);
+        formData.tipo_cobro === 'Alumno'
+          ? normalizeAlumno(updated)
+          : normalizeGeneral(updated);
 
       setCobros((prev) => prev.map((c) => (c.id === id ? { ...c, ...normalized } : c)));
       toast.success('Cobro actualizado exitosamente');
@@ -443,9 +479,9 @@ export const useCobrosFilter = (cobros) => {
 export const useCobrosStats = (cobros) => {
   const stats = useMemo(() => {
     const total = cobros.length;
-    const activos = cobros.filter((c) => c.activo).length;
+    const activos = cobros.filter((c) => c.activo !== false).length; // trata undefined como true
 
-    const activosOnly = cobros.filter((c) => c.activo);
+    const activosOnly = cobros.filter((c) => c.activo !== false);
     const porEstado = activosOnly.reduce((acc, c) => {
       acc[c.estado] = (acc[c.estado] || 0) + 1;
       return acc;
@@ -552,7 +588,8 @@ export const useCobroValidation = () => {
       const e2 = validateMonto(formData.monto);
       if (e2) errors.monto = e2;
 
-      if (!formData.descripcion?.trim()) errors.descripcion = 'La descripción es requerida';
+      // descripción ahora OPCIONAL (ajústalo si quieres forzarla)
+      // if (!formData.descripcion?.trim()) errors.descripcion = 'La descripción es requerida';
 
       const e3 = validateFecha(formData.fecha_emision);
       if (e3) errors.fecha_emision = e3;
@@ -569,10 +606,17 @@ export const useCobroValidation = () => {
       }
 
       if (!formData.tipo_cobro?.trim()) errors.tipo_cobro = 'El tipo de cobro es requerido';
-      if (!formData.categoria?.trim()) errors.categoria = 'La categoría es requerida';
 
-      if (formData.tipo_cobro === 'Alumno' && !formData.alumno_id) {
-        errors.alumno_id = 'Debe seleccionar un alumno para cobros individuales';
+      // ✅ ahora validamos categoria_id (no 'categoria')
+      if (formData.categoria_id == null || Number.isNaN(Number(formData.categoria_id))) {
+        errors.categoria_id = 'La categoría es requerida';
+      }
+
+      if (formData.tipo_cobro === 'Alumno') {
+        if (!formData.alumno_id) errors.alumno_id = 'Debe seleccionar un alumno para cobros individuales';
+        // curso_id opcional si backend lo infiere por el alumno
+      } else {
+        if (!formData.curso_id) errors.curso_id = 'Debe seleccionar un curso para cobros generales';
       }
 
       return { isValid: Object.keys(errors).length === 0, errors };

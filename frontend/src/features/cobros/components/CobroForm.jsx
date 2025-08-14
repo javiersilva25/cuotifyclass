@@ -10,28 +10,23 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Textarea } from '../../../components/ui/textarea';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '../../../components/ui/select';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '../../../components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { cn } from '../../../lib/utils';
 
 // APIs
 import alumnosAPI from '../../../api/alumnos';
 import { obtenerCursosActivos } from '../../../api/cursos';
+import categoriasAPI from '../../../api/categoriasCobros';
+import cobrosAPI from '../../../api/cobros';
+import cobrosAlumnosAPI from '../../../api/cobrosAlumnos';
 
 const TIPOS_COBRO = ['General', 'Alumno'];
-const CATEGORIAS = [
-  'Matrícula', 'Mensualidad', 'Material', 'Actividades',
-  'Seguro', 'Uniforme', 'Transporte', 'Alimentación', 'Otros',
-];
 
 function FormField({
   label, name, value, onChange, onBlur, error, touched,
-  type = 'text', placeholder, icon: Icon, required = false, disabled = false, className, ...props
+  type = 'text', placeholder, icon: Icon, required = false, disabled = false, className, inputRef, ...props
 }) {
   return (
     <div className={cn('space-y-2', className)}>
@@ -41,6 +36,7 @@ function FormField({
       <div className="relative">
         {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />}
         <Input
+          ref={inputRef}
           id={name}
           name={name}
           type={type}
@@ -49,6 +45,7 @@ function FormField({
           onBlur={onBlur}
           placeholder={placeholder}
           disabled={disabled}
+          aria-invalid={!!(error && touched)}
           className={cn(
             Icon && 'pl-10',
             error && touched && 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -57,11 +54,7 @@ function FormField({
         />
       </div>
       {error && touched && (
-        <motion.p
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-sm text-red-600 flex items-center gap-1"
-        >
+        <motion.p initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-red-600 flex items-center gap-1">
           <AlertCircle className="w-3 h-3" /> {error}
         </motion.p>
       )}
@@ -75,9 +68,9 @@ export default function CobroForm({
   cobro = null,
   isOpen = false,
   onClose,
-  onSubmit,
+  onSubmit,            // opcional
   isLoading = false,
-  validateForm,
+  // validateForm,      // ← se ignora para evitar validaciones antiguas
 }) {
   const [formData, setFormData] = useState({
     concepto: '',
@@ -86,23 +79,32 @@ export default function CobroForm({
     fecha_emision: '',
     fecha_vencimiento: '',
     tipo_cobro: 'General',
-    categoria: undefined,
+    categoria_id: '',        // ← string en el formulario
     alumno_id: undefined,
     curso_id: cursoId || undefined,
     numero_comprobante: '',
     observaciones: '',
   });
 
+  const refs = {
+    concepto: useRef(null),
+    monto: useRef(null),
+    categoria_id: useRef(null),
+    fecha_vencimiento: useRef(null),
+    curso_id: useRef(null),
+    alumno_id: useRef(null),
+  };
+
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fetchedCursosRef = useRef(false);
 
-  // Cursos (fallback con obtenerCursosActivos)
   const [cursosLocal, setCursosLocal] = useState([]);
   const cursosParaSelect = (cursosOptions?.length ? cursosOptions : cursosLocal);
 
-  // Alumnos por curso
+  const [categorias, setCategorias] = useState([]);
+
   const [alumnosOptions, setAlumnosOptions] = useState([]);
   const [loadingAlumnos, setLoadingAlumnos] = useState(false);
   const [alumnosError, setAlumnosError] = useState(null);
@@ -112,17 +114,20 @@ export default function CobroForm({
     [alumnosOptions, formData.alumno_id]
   );
 
-  // Init / reset
+  const hasErrors = useMemo(() => Object.values(errors).some(Boolean), [errors]);
+  const errorList = useMemo(() => Object.values(errors).filter(Boolean), [errors]);
+
+  // init/reset
   useEffect(() => {
     if (cobro) {
       setFormData({
         concepto: cobro.concepto || '',
         descripcion: cobro.descripcion || '',
-        monto: cobro.monto?.toString() || '',
+        monto: (cobro.monto_total ?? cobro.monto)?.toString() || '',
         fecha_emision: (cobro.fecha_emision || '').slice(0, 10),
         fecha_vencimiento: (cobro.fecha_vencimiento || '').slice(0, 10),
-        tipo_cobro: cobro.tipo_cobro || 'General',
-        categoria: cobro.categoria || undefined,
+        tipo_cobro: cobro.alumno_id ? 'Alumno' : 'General',
+        categoria_id: cobro.categoria_id != null ? String(cobro.categoria_id) : '',
         alumno_id: cobro.alumno_id != null ? String(cobro.alumno_id) : undefined,
         curso_id: cobro.curso_id ?? cursoId ?? undefined,
         numero_comprobante: cobro.numero_comprobante || '',
@@ -140,7 +145,7 @@ export default function CobroForm({
         fecha_emision: fechaEmi,
         fecha_vencimiento: fechaVen,
         tipo_cobro: 'General',
-        categoria: undefined,
+        categoria_id: '',   // ← string vacío
         alumno_id: undefined,
         curso_id: cursoId ?? undefined,
         numero_comprobante: '',
@@ -152,12 +157,9 @@ export default function CobroForm({
     setAlumnosOptions([]);
   }, [cobro, isOpen, cursoId]);
 
-  // Cargar cursos usando obtenerCursosActivos() si no vienen por props
+  // cursos (fallback)
   useEffect(() => {
-    if (!isOpen) return;
-    if (fetchedCursosRef.current) return;
-    if ((cursosOptions?.length ?? 0) > 0) return;
-
+    if (!isOpen || fetchedCursosRef.current || (cursosOptions?.length ?? 0) > 0) return;
     fetchedCursosRef.current = true;
     (async () => {
       const data = await obtenerCursosActivos();
@@ -168,80 +170,112 @@ export default function CobroForm({
     })();
   }, [isOpen, cursosOptions]);
 
-  // Autogenerar número de comprobante
+  // categorías
+  useEffect(() => {
+    if (!isOpen) return;
+    (async () => {
+      try {
+        const list = await categoriasAPI.listar();
+        setCategorias(Array.isArray(list) ? list : []);
+      } catch {
+        setCategorias([]);
+      }
+    })();
+  }, [isOpen]);
+
+  // autoselección de primera categoría si está vacío y hay datos
+  useEffect(() => {
+    if (isOpen && categorias.length > 0 && !formData.categoria_id) {
+      setFormData(s => ({ ...s, categoria_id: String(categorias[0].id) }));
+      setTouched(t => ({ ...t, categoria_id: true }));
+      setErrors(e => {
+        const { categoria_id: _omit, ...rest } = e;
+        return rest;
+      });
+    }
+  }, [isOpen, categorias, formData.categoria_id]);
+
+  // autogenerar número (usa string para comparar)
   useEffect(() => {
     if (cobro) return;
-    if (!formData.numero_comprobante && formData.categoria && formData.fecha_emision) {
+    if (!formData.numero_comprobante && formData.categoria_id && formData.fecha_emision) {
       const f = new Date(formData.fecha_emision);
       if (!isNaN(f)) {
         const y = f.getFullYear();
         const m = String(f.getMonth() + 1).padStart(2, '0');
         const d = String(f.getDate()).padStart(2, '0');
-        const code = String(formData.categoria).substring(0, 3).toUpperCase();
+        const catName = categorias.find(x => String(x.id) === String(formData.categoria_id))?.nombre ?? 'CBR';
+        const code = catName.substring(0, 3).toUpperCase();
         const rand = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
         setFormData(prev => ({ ...prev, numero_comprobante: `${code}-${y}${m}${d}-${rand}` }));
       }
     }
-  }, [formData.categoria, formData.fecha_emision, cobro, formData.numero_comprobante]);
+  }, [formData.categoria_id, formData.fecha_emision, cobro, formData.numero_comprobante, categorias]);
 
-  // Validación
+  // helpers error
+  const clearError = (name) => setErrors(prev => {
+    const { [name]: _omit, ...rest } = prev;
+    return rest;
+  });
+
+  // validación interna (única)
   const internalValidate = (data) => {
     const e = {};
     if (!data.concepto?.trim()) e.concepto = 'Concepto requerido';
-    if (!data.descripcion?.trim()) e.descripcion = 'Descripción requerida';
     const montoNum = Number(data.monto);
-    if (!montoNum || montoNum <= 0) e.monto = 'Monto debe ser mayor a 0';
-    if (!data.categoria) e.categoria = 'Selecciona una categoría';
-    if (!data.fecha_emision) e.fecha_emision = 'Fecha de emisión requerida';
+    if (!Number.isFinite(montoNum) || montoNum <= 0) e.monto = 'Monto debe ser mayor a 0';
+    if (!data.categoria_id) e.categoria_id = 'La categoría es requerida';
     if (!data.fecha_vencimiento) e.fecha_vencimiento = 'Fecha de vencimiento requerida';
     if (data.fecha_emision && data.fecha_vencimiento) {
       const emi = new Date(data.fecha_emision);
       const ven = new Date(data.fecha_vencimiento);
-      if (!isNaN(emi) && !isNaN(ven) && ven < emi) {
+      if (!Number.isNaN(emi.getTime()) && !Number.isNaN(ven.getTime()) && ven < emi) {
         e.fecha_vencimiento = 'El vencimiento no puede ser anterior a la emisión';
       }
     }
     if (!TIPOS_COBRO.includes(data.tipo_cobro)) {
       e.tipo_cobro = 'Tipo de cobro inválido';
     } else if (data.tipo_cobro === 'General') {
-      if (!data.curso_id) e.curso_id = 'Debes seleccionar un curso para un cobro general';
+      if (!data.curso_id) e.curso_id = 'Selecciona un curso';
     } else if (data.tipo_cobro === 'Alumno') {
-      if (!data.curso_id) e.curso_id = 'Selecciona un curso para elegir un alumno';
+      if (!data.curso_id) e.curso_id = 'Selecciona un curso';
       if (!data.alumno_id) e.alumno_id = 'Selecciona un alumno';
     }
     return { isValid: Object.keys(e).length === 0, errors: e };
   };
-  const runValidation = (data) => (validateForm ? validateForm(data) : internalValidate(data));
 
-  // Handlers
+  // handlers
   const onChange = (e) => {
     const { name, value } = e.target;
     setFormData(s => ({ ...s, [name]: value }));
-    if (errors[name]) setErrors(s => ({ ...s, [name]: '' }));
+    if (errors[name]) clearError(name);
   };
-
   const onBlur = (e) => {
     const { name } = e.target;
     setTouched(s => ({ ...s, [name]: true }));
-    const v = runValidation(formData);
-    if (v.errors[name]) setErrors(s => ({ ...s, [name]: v.errors[name] }));
+    const v = internalValidate(formData);
+    if (v.errors[name]) setErrors(s => ({ ...s, [name]: v.errors[name] })); else clearError(name);
   };
 
+  // Selects: marcan touched y revalidan
   const onSelect = (name, value) => {
-    setFormData(s => ({
-      ...s,
+    const next = {
+      ...formData,
       [name]: value,
       ...(name === 'tipo_cobro' ? { alumno_id: undefined } : {})
-    }));
-    if (errors[name]) setErrors(s => ({ ...s, [name]: '' }));
+    };
+    setFormData(next);
+    setTouched(t => ({ ...t, [name]: true }));
+    const v = internalValidate(next);
+    setErrors(v.errors);
   };
 
   const handleCursoChange = (curso_id) => {
     setFormData(s => ({ ...s, curso_id, alumno_id: undefined }));
-    if (errors.curso_id) setErrors(s => ({ ...s, curso_id: '' }));
+    if (errors.curso_id) clearError('curso_id');
   };
 
-  // Cargar alumnos cuando corresponda
+  // alumnos por curso
   useEffect(() => {
     const load = async () => {
       if (formData.tipo_cobro !== 'Alumno' || !formData.curso_id) {
@@ -251,7 +285,7 @@ export default function CobroForm({
       setLoadingAlumnos(true);
       setAlumnosError(null);
       try {
-        const list = await alumnosAPI.getByCurso(formData.curso_id); // devuelve array
+        const list = await alumnosAPI.getByCurso(formData.curso_id);
         const mapped = (list || []).map(a => ({
           id: a.id,
           nombre: a.nombre_completo || a.nombre || 'Estudiante',
@@ -259,10 +293,9 @@ export default function CobroForm({
           curso_id: a.curso_id ?? a.curso?.id ?? null,
         }));
         setAlumnosOptions(mapped);
-      } catch (e) {
+      } catch {
         setAlumnosError('No fue posible cargar los alumnos del curso');
         setAlumnosOptions([]);
-        console.error(e);
       } finally {
         setLoadingAlumnos(false);
       }
@@ -270,23 +303,65 @@ export default function CobroForm({
     load();
   }, [formData.tipo_cobro, formData.curso_id]);
 
+  const focusFirstError = (errs) => {
+    const order = formData.tipo_cobro === 'Alumno'
+      ? ['concepto', 'monto', 'categoria_id', 'fecha_vencimiento', 'curso_id', 'alumno_id']
+      : ['concepto', 'monto', 'categoria_id', 'fecha_vencimiento', 'curso_id'];
+    const firstKey = order.find(k => errs[k]);
+    const el = refs[firstKey]?.current;
+    if (el) {
+      el.focus?.();
+      el.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     const all = Object.keys(formData).reduce((acc, k) => (acc[k] = true, acc), {});
     setTouched(all);
 
-    const v = runValidation(formData);
-    if (!v.isValid) { setErrors(v.errors); return; }
+    const v = internalValidate(formData);
+    setErrors(v.errors);
+    if (!v.isValid) { focusFirstError(v.errors); return; }
 
     setIsSubmitting(true);
     try {
-      const submitData = {
-        ...formData,
-        monto: parseInt(formData.monto, 10),
-        alumno_id: formData.alumno_id ? parseInt(formData.alumno_id, 10) : null,
-        curso_id: formData.curso_id ?? (selectedAlumno?.curso_id ?? null),
-      };
-      await onSubmit(submitData);
+      const montoNum = Number(formData.monto);
+      const categoriaIdNum = formData.categoria_id ? Number(formData.categoria_id) : null;
+      const alumnoIdNum = formData.alumno_id ? Number(formData.alumno_id) : null;
+      const cursoIdNum = formData.curso_id ?? (selectedAlumno?.curso_id ?? null);
+      const numero = formData.numero_comprobante?.trim();
+
+      if (formData.tipo_cobro === 'General') {
+        const payload = {
+          curso_id: cursoIdNum,
+          concepto: formData.concepto,
+          descripcion: formData.descripcion || null,
+          categoria_id: categoriaIdNum,
+          monto_total: montoNum,
+          fecha_emision: formData.fecha_emision || null,
+          fecha_vencimiento: formData.fecha_vencimiento,
+          observaciones: formData.observaciones || null,
+          ...(numero ? { numero_comprobante: numero } : {})
+        };
+        const creado = await cobrosAPI.create(payload);
+        await onSubmit?.({ tipo: 'general', payload, creado });
+      } else {
+        const payload = {
+          alumno_id: alumnoIdNum,
+          concepto: formData.concepto,
+          descripcion: formData.descripcion || null,
+          categoria_id: categoriaIdNum,
+          monto: Number.isFinite(montoNum) ? montoNum : 0,
+          fecha_emision: formData.fecha_emision || null,
+          fecha_vencimiento: formData.fecha_vencimiento,
+          observaciones: formData.observaciones || null,
+          ...(numero ? { numero_comprobante: numero } : {})
+        };
+        const creado = await cobrosAlumnosAPI.create(payload);
+        await onSubmit?.({ tipo: 'alumno', payload, creado });
+      }
       onClose();
     } catch (err) {
       console.error('Error al enviar formulario:', err);
@@ -331,6 +406,7 @@ export default function CobroForm({
                   icon={Receipt}
                   required
                   disabled={isSubmitting}
+                  inputRef={refs.concepto}
                 />
                 <FormField
                   label="Número de Comprobante"
@@ -346,7 +422,7 @@ export default function CobroForm({
                 />
                 <div className="md:col-span-2">
                   <Label className="text-sm font-medium text-gray-700">
-                    Descripción <span className="text-red-500 ml-1">*</span>
+                    Descripción <span className="text-gray-400 ml-1">(opcional)</span>
                   </Label>
                   <Textarea
                     id="descripcion"
@@ -362,11 +438,7 @@ export default function CobroForm({
                     )}
                   />
                   {errors.descripcion && touched.descripcion && (
-                    <motion.p
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="text-sm text-red-600 flex items-center gap-1 mt-2"
-                    >
+                    <motion.p initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-red-600 flex items-center gap-1 mt-2">
                       <AlertCircle className="w-3 h-3" /> {errors.descripcion}
                     </motion.p>
                   )}
@@ -398,28 +470,30 @@ export default function CobroForm({
                   required
                   disabled={isSubmitting}
                   min="1"
+                  inputRef={refs.monto}
                 />
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-gray-700">
                     Categoría <span className="text-red-500 ml-1">*</span>
                   </Label>
                   <Select
-                    value={formData.categoria}
-                    onValueChange={(v) => onSelect('categoria', v)}
+                    value={formData.categoria_id || ''}                 // string controlado
+                    onValueChange={(v) => onSelect('categoria_id', v)}   // sin parseInt
                     disabled={isSubmitting}
                   >
-                    <SelectTrigger className={cn(
-                      errors.categoria && touched.categoria && 'border-red-300 focus:border-red-500'
-                    )}>
+                    <SelectTrigger
+                      ref={refs.categoria_id}
+                      className={cn(errors.categoria_id && touched.categoria_id && 'border-red-300 focus:border-red-500')}
+                    >
                       <SelectValue placeholder="Selecciona una categoría" />
                     </SelectTrigger>
                     <SelectContent>
-                      {CATEGORIAS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                      {categorias.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.nombre}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  {errors.categoria && touched.categoria && (
+                  {errors.categoria_id && touched.categoria_id && (
                     <motion.p initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-sm text-red-600 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> {errors.categoria}
+                      <AlertCircle className="w-3 h-3" /> {errors.categoria_id}
                     </motion.p>
                   )}
                 </div>
@@ -433,7 +507,6 @@ export default function CobroForm({
                   error={errors.fecha_emision}
                   touched={touched.fecha_emision}
                   icon={Calendar}
-                  required
                   disabled={isSubmitting}
                 />
                 <FormField
@@ -448,6 +521,7 @@ export default function CobroForm({
                   icon={Calendar}
                   required
                   disabled={isSubmitting}
+                  inputRef={refs.fecha_vencimiento}
                 />
               </div>
             </CardContent>
@@ -462,7 +536,6 @@ export default function CobroForm({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Tipo */}
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-gray-700">
                     Tipo de Cobro <span className="text-red-500 ml-1">*</span>
@@ -472,9 +545,7 @@ export default function CobroForm({
                     onValueChange={(v) => onSelect('tipo_cobro', v)}
                     disabled={isSubmitting}
                   >
-                    <SelectTrigger className={cn(
-                      errors.tipo_cobro && touched.tipo_cobro && 'border-red-300 focus:border-red-500'
-                    )}>
+                    <SelectTrigger className={cn(errors.tipo_cobro && touched.tipo_cobro && 'border-red-300 focus:border-red-500')}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -499,7 +570,6 @@ export default function CobroForm({
                   )}
                 </div>
 
-                {/* Curso */}
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-gray-700">Curso</Label>
                   <Select
@@ -507,9 +577,10 @@ export default function CobroForm({
                     onValueChange={(v) => handleCursoChange(parseInt(v, 10))}
                     disabled={isSubmitting}
                   >
-                    <SelectTrigger className={cn(
-                      errors.curso_id && touched.curso_id && 'border-red-300 focus:border-red-500'
-                    )}>
+                    <SelectTrigger
+                      ref={refs.curso_id}
+                      className={cn(errors.curso_id && touched.curso_id && 'border-red-300 focus:border-red-500')}
+                    >
                       <SelectValue placeholder="Selecciona un curso" />
                     </SelectTrigger>
                     <SelectContent>
@@ -527,7 +598,6 @@ export default function CobroForm({
                   )}
                 </div>
 
-                {/* Alumno */}
                 {formData.tipo_cobro === 'Alumno' && (
                   <div className="space-y-2 md:col-span-2">
                     <Label className="text-sm font-medium text-gray-700">
@@ -538,9 +608,10 @@ export default function CobroForm({
                       onValueChange={(v) => onSelect('alumno_id', v)}
                       disabled={isSubmitting || !formData.curso_id || loadingAlumnos}
                     >
-                      <SelectTrigger className={cn(
-                        errors.alumno_id && touched.alumno_id && 'border-red-300 focus:border-red-500'
-                      )}>
+                      <SelectTrigger
+                        ref={refs.alumno_id}
+                        className={cn(errors.alumno_id && touched.alumno_id && 'border-red-300 focus:border-red-500')}
+                      >
                         <SelectValue placeholder={
                           loadingAlumnos
                             ? 'Cargando alumnos...'
@@ -572,7 +643,7 @@ export default function CobroForm({
                 )}
               </div>
 
-              {/* Vista previa del destinatario */}
+              {/* Vista previa */}
               <div className="mt-4 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Destinatario:</p>
                 {formData.tipo_cobro === 'General' ? (
@@ -620,34 +691,39 @@ export default function CobroForm({
             </CardContent>
           </Card>
 
-          {Object.keys(errors).length > 0 && Object.keys(touched).length > 0 && (
+          {hasErrors && Object.keys(touched).length > 0 && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Corrige los errores antes de continuar.</AlertDescription>
+              <AlertDescription>
+                Corrige los errores antes de continuar.
+                <ul className="list-disc ml-5 mt-2 space-y-1">
+                  {errorList.map((msg, i) => <li key={i} className="text-sm">{msg}</li>)}
+                </ul>
+              </AlertDescription>
             </Alert>
           )}
-        </form>
 
-        <DialogFooter className="flex items-center gap-2">
-          <Button type="button" variant="outline" onClick={() => !isSubmitting && onClose()} disabled={isSubmitting}>
-            <X className="w-4 h-4 mr-2" /> Cancelar
-          </Button>
-          <Button type="submit" onClick={handleSubmit} disabled={isSubmitting || isLoading} className="bg-blue-600 hover:bg-blue-700">
-            {isSubmitting || isLoading ? (
-              <>
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-4 h-4 mr-2">
-                  <Save className="w-4 h-4" />
-                </motion.div>
-                {isEditing ? 'Actualizando...' : 'Guardando...'}
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4 mr-2" />
-                {isEditing ? 'Actualizar' : 'Guardar'}
-              </>
-            )}
-          </Button>
-        </DialogFooter>
+          <DialogFooter className="flex items-center gap-2 pt-0">
+            <Button type="button" variant="outline" onClick={() => !isSubmitting && onClose()} disabled={isSubmitting}>
+              <X className="w-4 h-4 mr-2" /> Cancelar
+            </Button>
+            <Button type="submit" disabled={isSubmitting || isLoading} className="bg-blue-600 hover:bg-blue-700">
+              {isSubmitting || isLoading ? (
+                <>
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-4 h-4 mr-2">
+                    <Save className="w-4 h-4" />
+                  </motion.div>
+                  {isEditing ? 'Actualizando...' : 'Guardando...'}
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  {isEditing ? 'Actualizar' : 'Guardar'}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

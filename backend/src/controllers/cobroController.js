@@ -1,266 +1,197 @@
-// controllers/cobroController.js
-const CobroService = require('../services/cobroService');
+// controllers/cobrosController.js
+const { Op } = require('sequelize');
+const { Cobro, Curso } = require('../models');
 const ResponseHelper = require('../utils/responseHelper');
-const { validateData, cobroValidator } = require('../utils/validators');
 const Logger = require('../utils/logger');
-const { sequelize } = require('../config/database');
 
-/** Normaliza query: acepta ?params=JSON, alias y tipos */
+// Normaliza query (?params=JSON, alias y tipos)
 function normQuery(req) {
   const q = { ...req.query };
-  if (typeof q.params === 'string') {
-    try { Object.assign(q, JSON.parse(q.params)); } catch (_) {}
-  }
-  // alias
+  if (typeof q.params === 'string') { try { Object.assign(q, JSON.parse(q.params)); } catch {} }
   if (q.cursoId && !q.curso_id) q.curso_id = q.cursoId;
-  if (q.fechaDesde && !q.fecha_desde) q.fecha_desde = q.fechaDesde;
-  if (q.fechaHasta && !q.fecha_hasta) q.fecha_hasta = q.fechaHasta;
-  if (q.vencidos !== undefined && q.vencidos_only === undefined)
-    q.vencidos_only = q.vencidos;
 
-  // tipos
-  q.page  = parseInt(q.page ?? 1, 10);
-  q.limit = parseInt(q.limit ?? 10, 10);
-  if (q.curso_id !== undefined) q.curso_id = parseInt(q.curso_id, 10);
-  if (q.vencidos_only !== undefined)
-    q.vencidos_only = String(q.vencidos_only).toLowerCase() === 'true';
+  q.page  = parseInt(q.page  ?? 1, 10);
+  q.limit = parseInt(q.limit ?? 20, 10);
+  q.offset = (q.page - 1) * q.limit;
 
-  return q;
+  const where = {};
+  if (q.curso_id) where.curso_id = q.curso_id;
+  if (q.categoria_id) where.categoria_id = q.categoria_id;
+  if (q.search) {
+    where[Op.or] = [
+      { concepto: { [Op.like]: `%${q.search}%` } },
+      { descripcion: { [Op.like]: `%${q.search}%` } },
+      { numero_comprobante: { [Op.like]: `%${q.search}%` } }
+    ];
+  }
+  return { q, where };
 }
 
-class CobroController {
-  /** Crear cobro por curso + fan-out a cobros_alumnos */
+// Genera número de comprobante si no viene
+function genComprobante(pref = 'CBG') {
+  const num = Math.floor(100000 + Math.random() * 900000);
+  return `${pref}-${Date.now()}-${num}`;
+}
+
+// Extrae el userId para auditoría
+function getUserId(req) {
+  const hdr = req.headers['x-user-id'];
+  const byHeader = Number(hdr);
+  if (Number.isFinite(byHeader) && byHeader > 0) return byHeader;
+  if (req.user?.id) return req.user.id;
+  if (req.auth?.userId) return req.auth.userId;
+  return 1; // ← fallback DEV
+}
+
+class CobrosController {
   static async create(req, res) {
     try {
-      const { isValid, errors, data } = validateData(cobroValidator, req.body);
-      if (!isValid) return ResponseHelper.validationError(res, errors);
+      const {
+        curso_id,
+        concepto,
+        descripcion,
+        categoria_id,
+        monto_total,
+        fecha_emision,
+        fecha_vencimiento,
+        numero_comprobante,
+        observaciones
+      } = req.body;
 
-      const userId = req.user?.id || 'system';
-      const cobro = await CobroService.create(data, userId); // { id, curso_id, ... }
-
-      const t = await sequelize.transaction();
-      try {
-        const [alumnos] = await sequelize.query(
-          `SELECT id FROM alumnos WHERE curso_id = :curso_id`,
-          { replacements: { curso_id: cobro.curso_id }, transaction: t }
-        );
-
-        let creados = 0;
-        if (alumnos.length > 0) {
-          const values = alumnos
-            .map((a, i) =>
-              `( :cobro_id, :alumno_id_${i}, :curso_id, :concepto, :monto, :fv, 'pendiente', :user, NOW())`
-            ).join(',');
-
-          const replacements = {
-            cobro_id: cobro.id,
-            curso_id: cobro.curso_id,
-            concepto: cobro.concepto,
-            monto: cobro.monto_total,
-            fv: cobro.fecha_vencimiento || null,
-            user: userId,
-          };
-          alumnos.forEach((a, i) => (replacements[`alumno_id_${i}`] = a.id));
-
-          await sequelize.query(
-            `INSERT INTO cobros_alumnos
-              (cobro_id, alumno_id, curso_id, concepto, monto, fecha_vencimiento, estado, creado_por, fecha_creacion)
-             VALUES ${values}`,
-            { replacements, transaction: t }
-          );
-          creados = alumnos.length;
-        }
-
-        await t.commit();
-        Logger.info('Cobro por curso creado y fan-out aplicado', {
-          cobroId: cobro.id, cursoId: cobro.curso_id, items_creados: creados, userId,
-        });
-
-        return ResponseHelper.created(res, { ...cobro, items_creados: creados }, 'Cobro creado exitosamente');
-      } catch (fanoutErr) {
-        await t.rollback();
-        Logger.error('Error en fan-out de cobros_alumnos', {
-          cobroId: cobro?.id, error: fanoutErr.message, stack: fanoutErr.stack,
-        });
-        return ResponseHelper.error(res, 'Error al generar cobros por alumno');
+      // Validación mínima
+      if (!curso_id || !concepto || monto_total == null || !fecha_vencimiento) {
+        return ResponseHelper.badRequest(res, 'curso_id, concepto, monto_total y fecha_vencimiento son obligatorios');
       }
-    } catch (error) {
-      Logger.error('Error al crear cobro', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
+
+      const userId = getUserId(req);
+      if (!userId) {
+        return ResponseHelper.badRequest(res, 'Falta usuario emisor (x-user-id)');
+      }
+
+      // Valida curso
+      const curso = await Curso.findByPk(curso_id);
+      if (!curso) return ResponseHelper.notFound(res, 'Curso no encontrado');
+
+      const monto = Number(monto_total);
+      if (!Number.isFinite(monto) || monto <= 0) {
+        return ResponseHelper.badRequest(res, 'monto_total inválido');
+      }
+
+      const payload = {
+        curso_id,
+        concepto,
+        descripcion: descripcion ?? null,
+        categoria_id: categoria_id ?? null,
+        monto_total: monto,
+        fecha_emision: fecha_emision ?? new Date(),
+        fecha_vencimiento,
+        numero_comprobante: numero_comprobante || genComprobante(),
+        observaciones: observaciones ?? null,
+        // auditoría
+        creado_por: userId,
+        actualizado_por: userId
+      };
+
+      const created = await Cobro.create(payload);
+      return ResponseHelper.created(res, created);
+    } catch (err) {
+      Logger.error('create cobro', { error: err?.message, stack: err?.stack });
+      return ResponseHelper.error(res, 'Error al crear cobro', err);
     }
   }
 
-  /** Listado (padres) con filtros */
   static async getAll(req, res) {
     try {
-      const q = normQuery(req);
-      const options = {
+      const { q, where } = normQuery(req);
+      const result = await Cobro.findAndCountAll({
+        where,
+        order: [['id', 'DESC']],
+        limit: q.limit, offset: q.offset
+      });
+      return ResponseHelper.ok(res, {
+        items: result.rows,
+        total: result.count,
         page: q.page,
-        limit: q.limit,
-        curso_id: q.curso_id,
-        fecha_desde: q.fecha_desde,
-        fecha_hasta: q.fecha_hasta,
-        vencidos_only: q.vencidos_only,
-      };
-      const result = await CobroService.findAll(options);
-      return ResponseHelper.paginated(res, result.cobros, result.pagination);
-    } catch (error) {
-      Logger.error('Error al obtener cobros', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
+        pages: Math.ceil(result.count / q.limit)
+      });
+    } catch (err) {
+      Logger.error('getAll cobros', { error: err?.message, stack: err?.stack });
+      return ResponseHelper.error(res, 'Error al listar cobros', err);
     }
   }
 
-  /** Detalle */
   static async getById(req, res) {
     try {
-      const { id } = req.params;
-      const cobro = await CobroService.findById(id);
-      if (!cobro) return ResponseHelper.notFound(res, 'Cobro');
-      return ResponseHelper.success(res, cobro);
-    } catch (error) {
-      Logger.error('Error al obtener cobro', { cobroId: req.params.id, error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
+      const item = await Cobro.findByPk(req.params.id);
+      if (!item) return ResponseHelper.notFound(res, 'Cobro no encontrado');
+      return ResponseHelper.ok(res, item);
+    } catch (err) {
+      Logger.error('getById cobro', { error: err?.message, stack: err?.stack });
+      return ResponseHelper.error(res, 'Error al obtener cobro', err);
     }
   }
 
-  /** Por curso */
-  static async getByCurso(req, res) {
-    try {
-      const cursoId = req.params.cursoId ?? req.params.curso_id;
-      const cobros = await CobroService.findByCurso(cursoId);
-      return ResponseHelper.success(res, cobros);
-    } catch (error) {
-      Logger.error('Error al obtener cobros por curso', { cursoId: req.params.cursoId, error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async getVencidos(req, res) {
-    try {
-      const cobros = await CobroService.findVencidos();
-      return ResponseHelper.success(res, cobros);
-    } catch (error) {
-      Logger.error('Error al obtener cobros vencidos', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async getProximosAVencer(req, res) {
-    try {
-      const dias = parseInt(req.query.dias, 10) || 7;
-      const cobros = await CobroService.findProximosAVencer(dias);
-      return ResponseHelper.success(res, cobros);
-    } catch (error) {
-      Logger.error('Error al obtener cobros próximos a vencer', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async getByDateRange(req, res) {
-    try {
-      const q = normQuery(req);
-      if (!q.fecha_inicio || !q.fecha_fin) {
-        return ResponseHelper.validationError(res, [
-          { field: 'fecha_inicio', message: 'La fecha de inicio es requerida' },
-          { field: 'fecha_fin', message: 'La fecha de fin es requerida' },
-        ]);
-      }
-      const cobros = await CobroService.findByDateRange(q.fecha_inicio, q.fecha_fin);
-      return ResponseHelper.success(res, cobros);
-    } catch (error) {
-      Logger.error('Error al obtener cobros por rango de fechas', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  /** Update */
   static async update(req, res) {
     try {
-      const { id } = req.params;
-      const { isValid, errors, data } = validateData(cobroValidator, req.body);
-      if (!isValid) return ResponseHelper.validationError(res, errors);
+      const id = req.params.id;
+      const item = await Cobro.findByPk(id);
+      if (!item) return ResponseHelper.notFound(res, 'Cobro no encontrado');
 
-      const userId = req.user?.id || 'system';
-      const cobro = await CobroService.update(id, data, userId);
-      if (!cobro) return ResponseHelper.notFound(res, 'Cobro');
+      const userId = getUserId(req);
+      if (!userId) {
+        return ResponseHelper.badRequest(res, 'Falta usuario emisor (x-user-id)');
+      }
 
-      Logger.info('Cobro actualizado exitosamente', { cobroId: id, userId });
-      return ResponseHelper.updated(res, cobro, 'Cobro actualizado exitosamente');
-    } catch (error) {
-      Logger.error('Error al actualizar cobro', { cobroId: req.params.id, error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
+      const data = {
+        concepto: req.body.concepto ?? item.concepto,
+        descripcion: req.body.descripcion ?? item.descripcion,
+        categoria_id: req.body.categoria_id ?? item.categoria_id,
+        monto_total: req.body.monto_total != null ? Number(req.body.monto_total) : item.monto_total,
+        fecha_emision: req.body.fecha_emision ?? item.fecha_emision,
+        fecha_vencimiento: req.body.fecha_vencimiento ?? item.fecha_vencimiento,
+        numero_comprobante: req.body.numero_comprobante ?? item.numero_comprobante,
+        observaciones: req.body.observaciones ?? item.observaciones,
+        actualizado_por: userId
+      };
+
+      if (req.body.monto_total != null) {
+        const monto = Number(req.body.monto_total);
+        if (!Number.isFinite(monto) || monto <= 0) {
+          return ResponseHelper.badRequest(res, 'monto_total inválido');
+        }
+        data.monto_total = monto;
+      }
+
+      await item.update(data);
+      return ResponseHelper.ok(res, item);
+    } catch (err) {
+      Logger.error('update cobro', { error: err?.message, stack: err?.stack });
+      return ResponseHelper.error(res, 'Error al actualizar cobro', err);
     }
   }
 
-  /** Delete (valida pagos) */
+  // Soft delete
   static async delete(req, res) {
     try {
-      const { id } = req.params;
-      const userId = req.user?.id || 'system';
+      const id = req.params.id;
+      const item = await Cobro.findByPk(id);
+      if (!item) return ResponseHelper.notFound(res, 'Cobro no encontrado');
 
-      const [rows] = await sequelize.query(
-        `SELECT COUNT(*) AS cnt FROM cobros_alumnos WHERE cobro_id = :id AND estado = 'pagado'`,
-        { replacements: { id } }
-      );
-      const cnt = Number(rows?.[0]?.cnt ?? 0);
-      if (cnt > 0) {
-        return ResponseHelper.conflict(res, 'No se puede eliminar: existen pagos asociados a este cobro');
+      const userId = getUserId(req);
+      if (!userId) {
+        return ResponseHelper.badRequest(res, 'Falta usuario emisor (x-user-id)');
       }
 
-      const deleted = await CobroService.delete(id, userId);
-      if (!deleted) return ResponseHelper.notFound(res, 'Cobro');
-
-      Logger.info('Cobro eliminado exitosamente', { cobroId: id, userId });
-      return ResponseHelper.deleted(res, 'Cobro eliminado exitosamente');
-    } catch (error) {
-      Logger.error('Error al eliminar cobro', { cobroId: req.params.id, error: error.message, stack: error.stack });
-      if (error.message?.includes('deudas asociadas')) {
-        return ResponseHelper.conflict(res, error.message);
-      }
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async restore(req, res) {
-    try {
-      const { id } = req.params;
-      const restored = await CobroService.restore(id);
-      if (!restored) return ResponseHelper.notFound(res, 'Cobro eliminado');
-
-      Logger.info('Cobro restaurado exitosamente', { cobroId: id });
-      return ResponseHelper.success(res, null, 'Cobro restaurado exitosamente');
-    } catch (error) {
-      Logger.error('Error al restaurar cobro', { cobroId: req.params.id, error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async getTotalByCurso(req, res) {
-    try {
-      const cursoId = req.params.cursoId ?? req.params.curso_id;
-      const total = await CobroService.getTotalByCurso(cursoId);
-      return ResponseHelper.success(res, { total });
-    } catch (error) {
-      Logger.error('Error al obtener total de cobros por curso', { cursoId: req.params.cursoId, error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
-    }
-  }
-
-  static async getEstadisticas(req, res) {
-    try {
-      const q = normQuery(req);
-      const filters = {
-        curso_id: q.curso_id,
-        fecha_desde: q.fecha_desde,
-        fecha_hasta: q.fecha_hasta,
-      };
-      const estadisticas = await CobroService.getEstadisticas(filters);
-      return ResponseHelper.success(res, estadisticas);
-    } catch (error) {
-      Logger.error('Error al obtener estadísticas de cobros', { error: error.message, stack: error.stack });
-      return ResponseHelper.error(res, 'Error interno del servidor');
+      await item.update({
+        eliminado_por: userId,
+        fecha_eliminacion: new Date()
+      });
+      return ResponseHelper.ok(res, { success: true });
+    } catch (err) {
+      Logger.error('delete cobro', { error: err?.message, stack: err?.stack });
+      return ResponseHelper.error(res, 'Error al eliminar cobro', err);
     }
   }
 }
 
-module.exports = CobroController;
+module.exports = CobrosController;

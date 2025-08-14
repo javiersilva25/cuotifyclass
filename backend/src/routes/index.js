@@ -17,6 +17,7 @@ const cursosRoutes = require('./cursoRoutes');
 const alumnosRoutes = require('./alumnoRoutes');
 const cobroRoutes = require('./cobroRoutes');
 const cobroAlumnoRoutes = require('./cobroAlumnoRoutes');
+const categoriasCobroRoutes = require('./categoriasCobrosRoutes');
 
 router.use((req, _res, next) => {
   const q = req.query || {};
@@ -43,6 +44,7 @@ router.use('/cursos', cursosRoutes);
 router.use('/alumnos', alumnosRoutes);
 router.use('/cobros', cobroRoutes);
 router.use('/cobros-alumnos', cobroAlumnoRoutes);
+router.use('/categorias-cobro', categoriasCobroRoutes);
 
 // Ruta de información del API
 router.get('/info', (req, res) => {
