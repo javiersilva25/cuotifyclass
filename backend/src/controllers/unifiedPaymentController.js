@@ -1,288 +1,188 @@
+// src/controllers/unifiedPaymentController.js
 const UnifiedPaymentService = require('../services/unifiedPaymentService');
 const Logger = require('../utils/logger');
+
+const getApoderadoId = (req) => {
+  // Prioriza path param, luego token decodificado o header
+  return (
+    req.params?.id ??
+    req.user?.id ??
+    req.user?.rut ??
+    req.headers['x-user-id'] ??
+    null
+  );
+};
+
+const firstArray = (...cands) => {
+  for (const c of cands) {
+    if (Array.isArray(c) && c.length) return c;
+  }
+  return [];
+};
 
 class UnifiedPaymentController {
   constructor() {
     this.paymentService = new UnifiedPaymentService();
   }
 
-  /**
-   * Obtener pasarelas de pago disponibles
-   */
-  async getAvailableGateways(req, res) {
+  // --- Pasarelas disponibles ---
+  async getAvailableGateways(_req, res) {
     try {
       const gateways = this.paymentService.getAvailableGateways();
-      
-      res.json({
-        success: true,
-        data: gateways,
-        default_gateway: this.paymentService.defaultGateway
-      });
+      res.json({ success: true, data: gateways, default_gateway: this.paymentService.defaultGateway });
     } catch (error) {
-      Logger.error('Error al obtener pasarelas disponibles', { error: error.message });
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('getAvailableGateways', { error: error.message });
+      res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Recomendar pasarela de pago
-   */
+  // --- Recomendación ---
   async recommendGateway(req, res) {
     try {
-      const { amount, country, priority, payment_method } = req.query;
-      
+      const { amount, country = 'CL', priority = 'cost', payment_method = 'card' } = req.query;
       const recommendation = this.paymentService.recommendGateway({
         amount: amount ? parseFloat(amount) : undefined,
-        country: country || 'CL',
-        priority: priority || 'cost',
-        paymentMethod: payment_method || 'card'
+        country,
+        priority,
+        paymentMethod: payment_method,
       });
-
       res.json({
         success: true,
         data: recommendation,
-        gateway_info: this.paymentService.getGatewayInfo(recommendation.gateway)
+        gateway_info: this.paymentService.getGatewayInfo(recommendation.gateway),
       });
     } catch (error) {
-      Logger.error('Error al recomendar pasarela', { error: error.message });
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('recommendGateway', { error: error.message });
+      res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Crear pago usando el sistema unificado
-   */
+  // --- Crear pago unificado ---
   async createPayment(req, res) {
     try {
-      const { id } = req.params; // apoderado_id
-      const { 
-        cuota_ids, 
-        alumno_id, 
-        gateway, 
-        payment_method = 'card',
-        country = 'CL'
-      } = req.body;
-
-      if (!cuota_ids || !Array.isArray(cuota_ids) || cuota_ids.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Debe proporcionar al menos una cuota para pagar'
-        });
+      const apoderadoId = getApoderadoId(req);
+      if (!apoderadoId) {
+        return res.status(400).json({ success: false, message: 'No se pudo determinar el apoderado' });
       }
 
-      const result = await this.paymentService.createPayment(id, cuota_ids, {
+      // Normalizamos ids (preferimos deudas)
+      const deudaIds = firstArray(
+        req.body?.deuda_ids,
+        req.body?.cuota_ids,
+        req.body?.cobro_ids,
+        req.body?.ids
+      );
+
+      if (!deudaIds.length) {
+        return res.status(400).json({ success: false, message: 'Debe proporcionar al menos una deuda a pagar' });
+      }
+
+      const gateway = (req.body?.gateway || this.paymentService.defaultGateway || 'mercadopago').toLowerCase();
+      const alumnoId = req.body?.alumno_id ?? null;
+      const paymentMethod = req.body?.payment_method || 'card';
+      const country = req.body?.country || 'CL';
+
+      const result = await this.paymentService.createPayment(apoderadoId, deudaIds, {
         gateway,
-        alumnoId: alumno_id,
-        paymentMethod: payment_method,
-        country
+        alumnoId,
+        paymentMethod,
+        country,
       });
 
-      Logger.info('Pago unificado creado exitosamente', {
-        apoderadoId: id,
-        gateway: result.gateway,
-        cuotaIds: cuota_ids
-      });
+      Logger.info('Pago unificado creado', { apoderadoId, gateway, deudaIds });
 
-      res.json({
-        success: true,
-        message: 'Pago creado exitosamente',
-        data: result
-      });
+      res.json({ success: true, message: 'Pago creado exitosamente', data: result });
     } catch (error) {
-      Logger.error('Error al crear pago unificado', {
-        error: error.message,
-        apoderadoId: req.params.id
-      });
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('createPayment', { error: error.message, apoderadoId: req.params?.id });
+      res.status(500).json({ success: false, message: error.message || 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Confirmar pago
-   */
+  // --- Confirmación (para gateways que la requieren) ---
   async confirmPayment(req, res) {
     try {
       const { gateway, ...paymentData } = req.body;
-
-      if (!gateway) {
-        return res.status(400).json({
-          success: false,
-          message: 'Gateway es requerido para confirmar el pago'
-        });
-      }
+      if (!gateway) return res.status(400).json({ success: false, message: 'gateway es requerido' });
 
       const result = await this.paymentService.confirmPayment(gateway, paymentData);
+      Logger.info('Pago unificado confirmado', { gateway });
 
-      Logger.info('Pago unificado confirmado exitosamente', {
-        gateway,
-        paymentData
-      });
-
-      res.json({
-        success: true,
-        message: 'Pago confirmado exitosamente',
-        data: result
-      });
+      res.json({ success: true, message: 'Pago confirmado exitosamente', data: result });
     } catch (error) {
-      Logger.error('Error al confirmar pago unificado', {
-        error: error.message,
-        gateway: req.body.gateway
-      });
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('confirmPayment', { error: error.message, gateway: req.body?.gateway });
+      res.status(500).json({ success: false, message: error.message || 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Obtener historial consolidado de pagos
-   */
+  // --- Historial consolidado ---
   async getPaymentHistory(req, res) {
     try {
-      const { id } = req.params; // apoderado_id
-      const { limit = 50 } = req.query;
+      const apoderadoId = getApoderadoId(req);
+      const limit = parseInt(req.query?.limit ?? 50, 10);
+      if (!apoderadoId) return res.status(400).json({ success: false, message: 'apoderado_id requerido' });
 
-      const history = await this.paymentService.getConsolidatedPaymentHistory(id, limit);
-
-      res.json({
-        success: true,
-        data: history,
-        total: history.length
-      });
+      const history = await this.paymentService.getConsolidatedPaymentHistory(apoderadoId, limit);
+      res.json({ success: true, data: history, total: history.length });
     } catch (error) {
-      Logger.error('Error al obtener historial consolidado', {
-        error: error.message,
-        apoderadoId: req.params.id
-      });
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('getPaymentHistory', { error: error.message });
+      res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Obtener estadísticas de pasarelas
-   */
+  // --- Estadísticas por pasarela ---
   async getGatewayStats(req, res) {
     try {
-      const { id } = req.params; // apoderado_id (opcional)
-      
-      const stats = await this.paymentService.getGatewayStats(id);
-
-      res.json({
-        success: true,
-        data: stats
-      });
+      const apoderadoId = req.params?.id ?? null;
+      const stats = await this.paymentService.getGatewayStats(apoderadoId);
+      res.json({ success: true, data: stats });
     } catch (error) {
-      Logger.error('Error al obtener estadísticas de pasarelas', {
-        error: error.message
-      });
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('getGatewayStats', { error: error.message });
+      res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
 
-  /**
-   * Procesar webhook unificado
-   */
+  // --- Webhook unificado (/api/payments/webhook/:gateway) ---
   async processWebhook(req, res) {
     try {
-      const { gateway } = req.params;
-      const webhookData = req.body;
+      const gateway = (req.params?.gateway || req.query?.gateway || '').toLowerCase();
+      if (!gateway) return res.status(400).json({ success: false, message: 'gateway es requerido' });
 
-      if (!gateway) {
-        return res.status(400).json({
-          success: false,
-          message: 'Gateway es requerido'
-        });
-      }
+      // Pasamos body y query para soportar MP (usa a veces query params)
+      const result = await this.paymentService.processWebhook(gateway, req.body, req.query);
 
-      const result = await this.paymentService.processWebhook(gateway, webhookData);
-
-      Logger.info('Webhook unificado procesado', {
-        gateway,
-        result
-      });
-
-      res.json({
-        success: true,
-        message: 'Webhook procesado exitosamente',
-        data: result
-      });
+      Logger.info('Webhook procesado', { gateway, status: result?.status });
+      // Importante para MP: responder 200 siempre que proceses el evento
+      res.json({ success: true, message: 'Webhook procesado', data: result });
     } catch (error) {
-      Logger.error('Error al procesar webhook unificado', {
-        error: error.message,
-        gateway: req.params.gateway
-      });
-      res.status(500).json({
-        success: false,
-        message: 'Error al procesar webhook',
-        error: error.message
-      });
+      Logger.error('processWebhook', { error: error.message, gateway: req.params?.gateway });
+      // Para MP, responder 200 aunque haya duplicados; si es error real, 500:
+      res.status(200).json({ success: false, message: 'Evento recibido', error: error.message });
     }
   }
 
-  /**
-   * Endpoint de prueba para validar configuraciones
-   */
-  async testGateways(req, res) {
+  // --- Smoke test de configuración ---
+  async testGateways(_req, res) {
     try {
       const testResults = {};
-
-      // Probar cada pasarela habilitada
-      for (const gateway of this.paymentService.enabledGateways) {
+      for (const gw of this.paymentService.enabledGateways) {
         try {
-          const service = this.paymentService.services[gateway];
-          const config = service.validateConfiguration();
-          testResults[gateway] = {
-            status: 'OK',
-            configuration: config
-          };
-        } catch (error) {
-          testResults[gateway] = {
-            status: 'ERROR',
-            error: error.message
-          };
+          const svc = this.paymentService.services[gw];
+          const cfg = svc.validateConfiguration ? svc.validateConfiguration() : { configured: true };
+          testResults[gw] = { status: 'OK', configuration: cfg };
+        } catch (e) {
+          testResults[gw] = { status: 'ERROR', error: e.message };
         }
       }
-
       res.json({
         success: true,
         message: 'Prueba de pasarelas completada',
-        data: {
-          enabled_gateways: this.paymentService.enabledGateways,
-          test_results: testResults
-        }
+        data: { enabled_gateways: this.paymentService.enabledGateways, test_results: testResults },
       });
     } catch (error) {
-      Logger.error('Error al probar pasarelas', { error: error.message });
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor',
-        error: error.message
-      });
+      Logger.error('testGateways', { error: error.message });
+      res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
 }
 
 module.exports = UnifiedPaymentController;
-

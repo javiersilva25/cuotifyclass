@@ -37,9 +37,22 @@ export default function ApoderadoDashboard() {
 
   useEffect(() => { refreshData(); }, [refreshData]);
 
+  // ===== helpers de datos =====
+  const parseDate = (d) => (d ? new Date(d) : null);
+  const getRestante = (d) => {
+    const r = Number(d?.restante);
+    if (!Number.isNaN(r) && r > 0) return r;
+    const monto = Number(d?.monto || 0);
+    const pagado = Number(d?.monto_pagado || d?.pagado || 0);
+    const calc = Math.max(monto - pagado, 0);
+    return calc > 0 ? calc : monto; // fallback final
+  };
+  const getVencimiento = (d) =>
+    parseDate(d?.fecha_vencimiento || d?.fecha_limite || d?.vencimiento || d?.fecha);
+
   useEffect(() => {
     if (deudasPendientes?.length) {
-      const total = deudasPendientes.reduce((s, d) => s + (Number(d.monto) || 0), 0);
+      const total = deudasPendientes.reduce((s, d) => s + getRestante(d), 0);
       getRecommendation({ amount: total });
     }
   }, [deudasPendientes, getRecommendation]);
@@ -50,19 +63,22 @@ export default function ApoderadoDashboard() {
 
   // ===== métricas rápidas =====
   const totalDeudas = useMemo(
-    () => (deudasPendientes || []).reduce((s, d) => s + (Number(d.monto) || 0), 0),
+    () => (deudasPendientes || []).reduce((s, d) => s + getRestante(d), 0),
     [deudasPendientes]
   );
   const deudasVencidas = useMemo(
-    () => (deudasPendientes || []).filter(d => new Date(d.fecha_limite) < new Date()).length,
+    () => (deudasPendientes || []).filter(d => {
+      const f = getVencimiento(d);
+      return f ? f < new Date() : false;
+    }).length,
     [deudasPendientes]
   );
   const pagosEsteAno = useMemo(
-    () => (historialPagos || []).filter(p => new Date(p.fecha_pago).getFullYear() === new Date().getFullYear()),
+    () => (historialPagos || []).filter(p => parseDate(p?.fecha_pago)?.getFullYear() === new Date().getFullYear()),
     [historialPagos]
   );
   const totalPagadoEsteAno = useMemo(
-    () => pagosEsteAno.reduce((s, p) => s + (Number(p.monto_pagado) || 0), 0),
+    () => pagosEsteAno.reduce((s, p) => s + (Number(p?.monto_pagado || p?.monto || 0)), 0),
     [pagosEsteAno]
   );
 
@@ -89,13 +105,13 @@ export default function ApoderadoDashboard() {
   const safeInicial = (h) => (safeNombre(h).charAt(0) || 'E').toUpperCase();
 
   const safeCurso = (h) => {
+    // Soporta string directo o objeto
+    if (typeof h?.curso === 'string') return h.curso;
     return h?.curso?.nombre
       || h?.curso_nombre
       || h?.nombre_curso
       || (h?.curso_id ? `Curso ${h.curso_id}` : 'Sin curso');
   };
-
-  console.log('[DEBUG hijos]', hijos);
 
   return (
     <>
@@ -161,7 +177,7 @@ export default function ApoderadoDashboard() {
                         <div className={`text-2xl font-bold ${kpi.accent || ''}`}>{kpi.v}</div>
                         <p className="text-xs text-muted-foreground">
                           {kpi.t === 'Hijos Registrados' ? 'Estudiantes activos' : null}
-                          {kpi.t === 'Deudas Pendientes' ? `${deudasPendientes.length} cuotas` : null}
+                          {kpi.t === 'Deudas Pendientes' ? `${deudasPendientes?.length || 0} cuotas` : null}
                           {kpi.t === 'Pagado este año' ? `${pagosEsteAno.length} pagos` : null}
                         </p>
                       </CardContent>
@@ -190,7 +206,7 @@ export default function ApoderadoDashboard() {
                                 Total a pagar: ${totalDeudas.toLocaleString('es-CL')}
                               </p>
                               <p className="text-sm text-yellow-600">
-                                {deudasPendientes.length} cuotas pendientes
+                                {(deudasPendientes?.length || 0)} cuotas pendientes
                               </p>
                             </div>
                             {recommendation && (
@@ -233,16 +249,18 @@ export default function ApoderadoDashboard() {
                           {historialPagos.slice(0, 3).map((pago) => (
                             <div key={pago.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                               <div>
-                                <p className="font-medium text-sm">{pago.cuota?.nombre}</p>
+                                <p className="font-medium text-sm">{pago?.cuota?.nombre || pago?.concepto || 'Pago'}</p>
                                 <p className="text-xs text-gray-600">
-                                  {format(new Date(pago.fecha_pago), 'dd MMM yyyy', { locale: es })}
+                                  {pago?.fecha_pago
+                                    ? format(new Date(pago.fecha_pago), 'dd MMM yyyy', { locale: es })
+                                    : '—'}
                                 </p>
                               </div>
                               <div className="text-right">
                                 <p className="font-medium text-sm">
-                                  ${Number(pago.monto_pagado || 0).toLocaleString('es-CL')}
+                                  ${Number(pago?.monto_pagado || pago?.monto || 0).toLocaleString('es-CL')}
                                 </p>
-                                <Badge variant="outline" className="text-xs">{pago.metodo_pago}</Badge>
+                                <Badge variant="outline" className="text-xs">{pago?.metodo_pago || '—'}</Badge>
                               </div>
                             </div>
                           ))}
@@ -272,7 +290,10 @@ export default function ApoderadoDashboard() {
                     const nombre = safeNombre(hijo);
                     const inicial = safeInicial(hijo);
                     const cursoNombre = safeCurso(hijo);
-                    const rutDisplay = hijo.rut || hijo.usuario_rut || hijo.usuario_id; // si existiera
+                    const rutDisplay = hijo.rut || hijo.usuario_rut || hijo.usuario_id;
+
+                    const countDeudas = (deudasPendientes || [])
+                      .filter(d => String(d.alumno_id) === String(hijo.id)).length;
 
                     return (
                       <motion.div
@@ -308,7 +329,7 @@ export default function ApoderadoDashboard() {
                               <div className="flex justify-between text-sm">
                                 <span className="text-gray-600">Deudas:</span>
                                 <span className="font-medium">
-                                  {(deudasPendientes || []).filter(d => String(d.alumno_id) === String(hijo.id)).length} pendientes
+                                  {countDeudas} pendientes
                                 </span>
                               </div>
                             </div>
@@ -334,10 +355,12 @@ export default function ApoderadoDashboard() {
               {(deudasPendientes || []).length ? (
                 <div className="space-y-4">
                   {deudasPendientes.map((deuda, index) => {
-                    const isVencida = new Date(deuda.fecha_limite) < new Date();
+                    const venc = getVencimiento(deuda);
+                    const isVencida = venc ? venc < new Date() : false;
                     const hijo = (hijos || []).find(h => String(h.id) === String(deuda.alumno_id));
                     const nombre = hijo ? safeNombre(hijo) : 'Estudiante';
                     const cursoNombre = hijo ? safeCurso(hijo) : '—';
+                    const montoMostrar = getRestante(deuda); // restante prioritario
 
                     return (
                       <motion.div
@@ -346,13 +369,17 @@ export default function ApoderadoDashboard() {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.06 }}
                       >
-                        <Card className={isVencida ? 'border-red-200 bg-red-50' : ''}>
+                        <Card className={isVencida ? 'border-amber-300 bg-amber-50' : ''}>
                           <CardContent className="p-6">
                             <div className="flex items-center justify-between">
                               <div className="flex-1">
                                 <div className="flex items-center gap-3 mb-2">
-                                  <h3 className="font-semibold text-lg">{deuda.nombre}</h3>
-                                  {isVencida && <Badge variant="destructive">Vencida</Badge>}
+                                  <h3 className="font-semibold text-lg">{deuda.concepto || deuda.nombre || 'Cobro'}</h3>
+                                  {isVencida && (
+                                    <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-300">
+                                      Vencida
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                                   <div>
@@ -365,15 +392,15 @@ export default function ApoderadoDashboard() {
                                   </div>
                                   <div>
                                     <span className="text-gray-600">Fecha límite:</span>
-                                    <p className={`font-medium ${isVencida ? 'text-red-600' : ''}`}>
-                                      {format(new Date(deuda.fecha_limite), 'dd MMM yyyy', { locale: es })}
+                                    <p className={`font-medium ${isVencida ? 'text-amber-700' : ''}`}>
+                                      {venc ? format(venc, 'dd MMM yyyy', { locale: es }) : '—'}
                                     </p>
                                   </div>
                                 </div>
                               </div>
                               <div className="text-right">
                                 <p className="text-2xl font-bold text-green-600">
-                                  ${Number(deuda.monto || 0).toLocaleString('es-CL')}
+                                  ${Number(montoMostrar || 0).toLocaleString('es-CL')}
                                 </p>
                                 <p className="text-sm text-gray-600">CLP</p>
                               </div>
@@ -418,19 +445,21 @@ export default function ApoderadoDashboard() {
                             <div className="flex-1">
                               <div className="flex items-center gap-3 mb-2">
                                 <CheckCircle className="w-5 h-5 text-green-500" />
-                                <h3 className="font-semibold">{pago.cuota?.nombre}</h3>
-                                <Badge variant="outline">{pago.metodo_pago}</Badge>
+                                <h3 className="font-semibold">{pago?.cuota?.nombre || pago?.concepto || 'Pago'}</h3>
+                                <Badge variant="outline">{pago?.metodo_pago || '—'}</Badge>
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                                 <div>
                                   <span className="text-gray-600">Fecha de pago:</span>
                                   <p className="font-medium">
-                                    {format(new Date(pago.fecha_pago), 'dd MMM yyyy HH:mm', { locale: es })}
+                                    {pago?.fecha_pago
+                                      ? format(new Date(pago.fecha_pago), 'dd MMM yyyy HH:mm', { locale: es })
+                                      : '—'}
                                   </p>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">ID Transacción:</span>
-                                  <p className="font-medium font-mono text-xs">{pago.transaccion_id}</p>
+                                  <p className="font-medium font-mono text-xs">{pago?.transaccion_id || '—'}</p>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Estado:</span>
@@ -440,7 +469,7 @@ export default function ApoderadoDashboard() {
                             </div>
                             <div className="text-right">
                               <p className="text-xl font-bold text-green-600">
-                                ${Number(pago.monto_pagado || 0).toLocaleString('es-CL')}
+                                ${Number(pago?.monto_pagado || pago?.monto || 0).toLocaleString('es-CL')}
                               </p>
                               <p className="text-sm text-gray-600">CLP</p>
                             </div>

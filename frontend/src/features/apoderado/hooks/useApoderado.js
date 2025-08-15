@@ -1,13 +1,15 @@
 // src/features/apoderado/hooks/useApoderado.js
 import { useState, useEffect, useCallback } from 'react';
 import apoderadoClient, { paymentsAPI } from '@/api/apoderado';
+import apiClient from '@/api/client';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 
-// ---------- helpers / adapters ----------
+/* ======================= helpers / adapters ======================= */
 const getArray = (resp) => {
   const d = resp?.data ?? resp;
   if (Array.isArray(d)) return d;
   if (Array.isArray(d?.items)) return d.items;
+  if (Array.isArray(d?.data)) return d.data;
   return [];
 };
 
@@ -44,6 +46,7 @@ const adaptDeuda = (r = {}) => ({
   nombre: r.nombre ?? r.concepto ?? r.descripcion ?? 'Cuota',
   monto: Number(r.monto ?? r.monto_total ?? r.total ?? 0),
   fecha_limite: r.fecha_limite ?? r.vencimiento ?? r.fecha_vencimiento ?? null,
+  estado: r.estado ?? 'pendiente',
 });
 
 const adaptPago = (r = {}) => ({
@@ -55,7 +58,7 @@ const adaptPago = (r = {}) => ({
   transaccion_id: r.transaccion_id ?? r.reference ?? r.order_id ?? r.id ?? '',
 });
 
-// ---------- auth (login apoderado) ----------
+/* ======================= auth (login apoderado) ======================= */
 export const useApoderadoAuth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -69,15 +72,13 @@ export const useApoderadoAuth = () => {
       if (!response?.success) throw new Error(response?.message || 'Error en el login');
 
       const ap = response.data?.apoderado || {};
-      // Normalizamos para que el contexto SIEMPRE tenga .id y .token
       const userData = {
         id: ap.id ?? ap.apoderado_id ?? ap.rut ?? ap.usuario_id ?? null,
         rut: ap.rut ?? ap.id ?? null,
         nombre:
           ap.nombre ||
           ap.nombre_completo ||
-          [ap.nombres, ap.apellido_paterno, ap.apellido_materno]
-            .filter(Boolean).join(' ') ||
+          [ap.nombres, ap.apellido_paterno, ap.apellido_materno].filter(Boolean).join(' ') ||
           'Apoderado',
         ...ap,
         token: response.data?.token ?? null,
@@ -97,7 +98,7 @@ export const useApoderadoAuth = () => {
   return { handleLogin, isLoading, error };
 };
 
-// ---------- datos del apoderado ----------
+/* ======================= datos del apoderado ======================= */
 export const useApoderadoData = () => {
   const [profile, setProfile] = useState(null);
   const [hijos, setHijos] = useState([]);
@@ -107,7 +108,6 @@ export const useApoderadoData = () => {
   const [error, setError] = useState(null);
   const { user } = useAuth();
 
-  // id obligatorio; token opcional
   const getAuth = () => {
     const id = user?.id ?? user?.rut ?? null;
     const token = user?.token ?? null;
@@ -116,7 +116,7 @@ export const useApoderadoData = () => {
 
   const loadProfile = useCallback(async () => {
     const { id, token } = getAuth();
-    if (!id) return; // no dispares error visual si aún no hay sesión
+    if (!id) return;
     setIsLoading(true); setError(null);
     try {
       const resp = await apoderadoClient.getProfile(id, token);
@@ -143,13 +143,41 @@ export const useApoderadoData = () => {
     }
   }, [user]);
 
+  /**
+   * Consolidación de deudas:
+   * 1) Trae hijos del apoderado
+   * 2) Para cada hijo consulta /api/cobros-alumnos?alumno_id=...&estado=pendiente
+   * 3) Une y adapta resultados
+   */
   const loadDeudasPendientes = useCallback(async () => {
-    const { id, token } = getAuth();
+    const { id } = getAuth();
     if (!id) return;
     setIsLoading(true); setError(null);
+
     try {
-      const resp = await apoderadoClient.getDeudasPendientes(id, token);
-      setDeudasPendientes(getArray(resp).map(adaptDeuda));
+      // 1) hijos
+      const respHijos = await apoderadoClient.getHijos(id);
+      const hijosList = getArray(respHijos).map(adaptHijo);
+      setHijos(hijosList); // de paso actualiza hijos si no estaban
+
+      const ids = hijosList.map(h => h.id).filter(Boolean);
+      if (ids.length === 0) {
+        setDeudasPendientes([]);
+        return;
+      }
+
+      // 2) cobros por alumno (paralelo)
+      const calls = ids.map(alumnoId =>
+        apiClient.get('/api/cobros-alumnos', {
+          params: { alumno_id: alumnoId, estado: 'pendiente', limit: 1000 },
+        })
+      );
+
+      const results = await Promise.all(calls);
+
+      // 3) unificación
+      const all = results.flatMap(r => getArray(r).map(adaptDeuda));
+      setDeudasPendientes(all);
     } catch (err) {
       setError(err.message);
       setDeudasPendientes([]);
@@ -176,7 +204,12 @@ export const useApoderadoData = () => {
   const refreshData = useCallback(async () => {
     const { id } = getAuth();
     if (!id) return;
-    await Promise.all([loadProfile(), loadHijos(), loadDeudasPendientes(), loadHistorialPagos()]);
+    await Promise.all([
+      loadProfile(),
+      loadHijos(),
+      loadDeudasPendientes(),
+      loadHistorialPagos(),
+    ]);
   }, [loadProfile, loadHijos, loadDeudasPendientes, loadHistorialPagos]);
 
   return {
@@ -194,7 +227,7 @@ export const useApoderadoData = () => {
   };
 };
 
-// ---------- pagos unificados ----------
+/* ======================= pagos unificados ======================= */
 export const usePayments = () => {
   const [gateways, setGateways] = useState([]);
   const [recommendation, setRecommendation] = useState(null);

@@ -202,9 +202,7 @@ const TesoreroDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {estadisticas?.total_recaudado && estadisticas?.total_pendiente
-                ? Math.round((estadisticas.total_recaudado / (estadisticas.total_recaudado + estadisticas.total_pendiente)) * 100)
-                : 0}%
+              {Math.round(Number(estadisticas?.eficiencia_cobro ?? 0))}%
             </div>
             <p className="text-xs text-muted-foreground">Porcentaje de cobro</p>
           </CardContent>

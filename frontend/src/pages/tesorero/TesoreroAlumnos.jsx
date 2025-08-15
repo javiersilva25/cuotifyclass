@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import Navbar from '../../pages/Navbar.jsx';
 import tesoreroAPI from '../../api/tesorero';
 
-// ------- adaptadores/ayudas -------
+/* --------------------- adaptadores/ayudas --------------------- */
 const adaptAlumno = (raw = {}) => {
   const nombreCompleto =
     raw.nombre_completo ||
@@ -47,24 +47,30 @@ const toArray = (x) => {
   return [];
 };
 
+/* -------------------------- Componente ------------------------- */
 export default function TesoreroAlumnos() {
-  // Traemos alumnos con el hook
+  // Hook que trae alumnos del curso del tesorero
   const { alumnos, loading: loadingAlumnos, error, pagination, fetchAlumnos, changePage } =
     useAlumnosCursoTesorero();
 
-  // Traemos el tesorero directamente (igual que en el dashboard que ya te funciona)
+  // Datos del tesorero (para validar curso)
   const [loadingTesorero, setLoadingTesorero] = useState(true);
   const [tesorero, setTesorero] = useState(null);
 
+  // Filtros locales
   const [searchTerm, setSearchTerm] = useState('');
   const [filtros, setFiltros] = useState({ estado_deuda: '', orden: 'nombre' });
 
-  // Cargar mis datos de tesorero
+  // Finanzas por alumno (enriquecidas desde backend)
+  const [finanzas, setFinanzas] = useState({});            // { [alumnoId]: { deuda_total, monto_pagado, ... } }
+  const [loadingFinanzas, setLoadingFinanzas] = useState(false);
+
+  /* ------------ Cargar mis datos de tesorero ------------ */
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const me = await tesoreroAPI.getMyData(); // devuelve el objeto directo
+        const me = await tesoreroAPI.getMyData();
         if (alive) setTesorero(me || null);
       } finally {
         if (alive) setLoadingTesorero(false);
@@ -73,7 +79,7 @@ export default function TesoreroAlumnos() {
     return () => { alive = false; };
   }, []);
 
-  // Cargar alumnos solo cuando ya sepamos el curso del tesorero
+  /* ------ Cargar alumnos cuando ya haya curso asignado ----- */
   useEffect(() => {
     if (!tesorero?.curso?.id) return;
     fetchAlumnos({
@@ -83,12 +89,49 @@ export default function TesoreroAlumnos() {
     });
   }, [tesorero?.curso?.id, searchTerm, filtros, fetchAlumnos]);
 
+  /* -- Enriquecer cada alumno con resumen financiero (cobros_alumnos) -- */
+  useEffect(() => {
+    const list = toArray(alumnos);
+    if (!list.length) return;
+    let alive = true;
+    (async () => {
+      setLoadingFinanzas(true);
+      try {
+        const updates = {};
+        await Promise.all(
+          list.map(async (raw) => {
+            const id = raw.id ?? raw.alumno_id;
+            if (!id || finanzas[id]) return;
+            try {
+              const r = await tesoreroAPI.getAlumnoResumenMe(id);
+              // r: { curso_id, alumno_id, monto_total, monto_pagado, deuda_total, items_pendientes }
+              updates[id] = r || {};
+            } catch {
+              updates[id] = { deuda_total: 0 };
+            }
+          })
+        );
+        if (alive && Object.keys(updates).length) {
+          setFinanzas((prev) => ({ ...prev, ...updates }));
+        }
+      } finally {
+        if (alive) setLoadingFinanzas(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [alumnos, finanzas]);
+
   const handleSearch = (e) => setSearchTerm(e.target.value);
   const handleFiltroChange = (k, v) => setFiltros((p) => ({ ...p, [k]: v }));
 
-  // Normalización + filtros/orden locales (sobre lo que respondió el hook)
+  /* --------- Normalización + filtros/orden para la tabla --------- */
   const rows = useMemo(() => {
-    const base = toArray(alumnos).map(adaptAlumno);
+    const base = toArray(alumnos).map((raw) => {
+      const a = adaptAlumno(raw);
+      const f = finanzas[a.id];
+      if (f) a.deuda_total = Number(f.deuda_total ?? a.deuda_total ?? 0);
+      return a;
+    });
 
     // búsqueda
     const q = searchTerm.trim().toLowerCase();
@@ -96,7 +139,7 @@ export default function TesoreroAlumnos() {
 
     // estado deuda
     if (filtros.estado_deuda === 'pendiente') list = list.filter(a => (a.deuda_total ?? 0) > 0);
-    if (filtros.estado_deuda === 'pagado') list = list.filter(a => (a.deuda_total ?? 0) === 0);
+    if (filtros.estado_deuda === 'pagado')    list = list.filter(a => (a.deuda_total ?? 0) === 0);
 
     // orden
     const last = (s) => (s || '').trim().split(/\s+/).pop() || '';
@@ -106,9 +149,9 @@ export default function TesoreroAlumnos() {
     if (filtros.orden === 'deuda_asc')   list = [...list].sort((a,b) => (a.deuda_total ?? 0) - (b.deuda_total ?? 0));
 
     return list;
-  }, [alumnos, searchTerm, filtros]);
+  }, [alumnos, searchTerm, filtros, finanzas]);
 
-  // --- Estados de UI ----
+  /* -------------------------- UI states -------------------------- */
   if (loadingTesorero) {
     return (
       <>
@@ -232,6 +275,9 @@ export default function TesoreroAlumnos() {
               </div>
             ) : (
               <div className="space-y-4">
+                {loadingFinanzas && (
+                  <p className="text-xs text-muted-foreground">Actualizando deudas…</p>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -257,10 +303,14 @@ export default function TesoreroAlumnos() {
                           </TableCell>
                           <TableCell>{al.rut || '—'}</TableCell>
                           <TableCell>
-                            <Badge variant={alDia ? 'default' : 'destructive'}>
-                              {alDia ? 'Al día' : 'Con deudas'}
-                            </Badge>
-                          </TableCell>
+                              {alDia ? (
+                                <Badge>Al día</Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300">
+                                  Con deudas
+                                </Badge>
+                              )}
+                            </TableCell>
                           <TableCell>
                             <span className={`font-medium ${alDia ? 'text-green-600' : 'text-red-600'}`}>
                               {formatCurrency(deuda)}

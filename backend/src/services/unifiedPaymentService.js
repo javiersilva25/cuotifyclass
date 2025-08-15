@@ -1,4 +1,5 @@
-const PaymentService = require('./paymentService'); // Stripe
+// src/services/unifiedPaymentService.js
+const PaymentService = require('./paymentService');          // Stripe
 const TransbankService = require('./transbankService');
 const MercadoPagoService = require('./mercadopagoService');
 const BancoEstadoService = require('./bancoestadoService');
@@ -6,261 +7,199 @@ const Logger = require('../utils/logger');
 
 class UnifiedPaymentService {
   constructor() {
-    // Inicializar todos los servicios de pago
+    // Instancias de servicios
     this.services = {
-      stripe: new PaymentService(),
-      transbank: new TransbankService(),
-      mercadopago: new MercadoPagoService(),
-      bancoestado: new BancoEstadoService()
+      stripe:       new PaymentService(),
+      transbank:    new TransbankService(),
+      mercadopago:  new MercadoPagoService(),
+      bancoestado:  new BancoEstadoService(),
     };
 
-    // Configuración de pasarelas por defecto
-    this.defaultGateway = process.env.DEFAULT_PAYMENT_GATEWAY || 'stripe';
+    // Gateway por defecto (cae a MP si no hay env var)
+    this.defaultGateway = (process.env.DEFAULT_PAYMENT_GATEWAY || 'mercadopago').toLowerCase();
+
+    // Resuelve una vez las pasarelas habilitadas
     this.enabledGateways = this.getEnabledGateways();
   }
 
-  /**
-   * Obtener pasarelas habilitadas según configuración
-   */
+  /** Detecta pasarelas habilitadas */
   getEnabledGateways() {
     const enabled = [];
 
+    // Stripe
     try {
-      // Verificar Stripe
-      if (process.env.STRIPE_SECRET_KEY) {
-        enabled.push('stripe');
-      }
-    } catch (error) {
-      Logger.warn('Stripe no disponible', { error: error.message });
+      if (process.env.STRIPE_SECRET_KEY) enabled.push('stripe');
+    } catch (e) {
+      Logger.warn('Stripe no disponible', { error: e.message });
     }
 
+    // Transbank
     try {
-      // Verificar Transbank
-      const transbankConfig = this.services.transbank.validateConfiguration();
-      if (transbankConfig.configured) {
-        enabled.push('transbank');
-      }
-    } catch (error) {
-      Logger.warn('Transbank no disponible', { error: error.message });
+      const ok = this.services.transbank.validateConfiguration();
+      if (ok?.configured) enabled.push('transbank');
+    } catch (e) {
+      Logger.warn('Transbank no disponible', { error: e.message });
     }
 
+    // MercadoPago
     try {
-      // Verificar MercadoPago
-      const mpConfig = this.services.mercadopago.validateConfiguration();
-      if (mpConfig.configured) {
-        enabled.push('mercadopago');
-      }
-    } catch (error) {
-      Logger.warn('MercadoPago no disponible', { error: error.message });
+      const ok = this.services.mercadopago.validateConfiguration();
+      if (ok?.configured) enabled.push('mercadopago');
+    } catch (e) {
+      Logger.warn('MercadoPago no disponible', { error: e.message });
     }
 
+    // BancoEstado
     try {
-      // Verificar BancoEstado
-      const beConfig = this.services.bancoestado.validateConfiguration();
-      if (beConfig.configured) {
-        enabled.push('bancoestado');
-      }
-    } catch (error) {
-      Logger.warn('BancoEstado no disponible', { error: error.message });
+      const ok = this.services.bancoestado.validateConfiguration();
+      if (ok?.configured) enabled.push('bancoestado');
+    } catch (e) {
+      Logger.warn('BancoEstado no disponible', { error: e.message });
     }
 
-    Logger.info('Pasarelas de pago habilitadas', { enabled });
+    Logger.info('Pasarelas habilitadas', { enabled });
     return enabled;
   }
 
-  /**
-   * Obtener información de todas las pasarelas disponibles
-   */
-  getAvailableGateways() {
-    return this.enabledGateways.map(gateway => {
-      const info = this.getGatewayInfo(gateway);
-      return {
-        id: gateway,
-        name: info.name,
-        description: info.description,
-        fees: info.fees,
-        supported_methods: info.supported_methods,
-        recommended_for: info.recommended_for
-      };
-    });
-  }
-
-  /**
-   * Obtener información específica de una pasarela
-   */
+  /** Info legible por UI */
   getGatewayInfo(gateway) {
-    const gatewayInfo = {
+    const info = {
       stripe: {
         name: 'Stripe',
         description: 'Pasarela internacional con amplia cobertura',
         fees: '3.6% + $30 CLP (nacional), 4.4% + $30 CLP (internacional)',
         supported_methods: ['Tarjetas de crédito', 'Tarjetas de débito', 'Apple Pay', 'Google Pay'],
-        recommended_for: ['Pagos internacionales', 'Experiencia de usuario premium']
+        recommended_for: ['Pagos internacionales', 'UX premium'],
       },
       transbank: {
         name: 'Transbank',
         description: 'Líder en pagos electrónicos en Chile',
-        fees: '~3.19% + IVA (más económico para Chile)',
-        supported_methods: ['Tarjetas de crédito', 'Redcompra (débito)'],
-        recommended_for: ['Mercado chileno', 'Costos más bajos']
+        fees: '~3.19% + IVA',
+        supported_methods: ['Crédito', 'Redcompra (débito)'],
+        recommended_for: ['Mercado chileno', 'Costos bajos'],
       },
       mercadopago: {
         name: 'MercadoPago',
         description: 'Líder en pagos de Latinoamérica',
         fees: '3.49% + IVA',
         supported_methods: ['Tarjetas', 'Transferencias', 'Efectivo', 'Cuotas sin interés'],
-        recommended_for: ['Cobertura regional', 'Múltiples métodos de pago']
+        recommended_for: ['Cobertura regional', 'Múltiples métodos'],
       },
       bancoestado: {
         name: 'BancoEstado',
-        description: 'Banco estatal chileno con tarifas preferenciales',
+        description: 'Transferencias y tarjetas con tarifas preferenciales',
         fees: 'Desde 0.013 UF + IVA (transferencias)',
-        supported_methods: ['Transferencias bancarias', 'Tarjetas', 'Cuotas sin interés'],
-        recommended_for: ['Transferencias económicas', 'Respaldo estatal']
-      }
+        supported_methods: ['Transferencias', 'Tarjetas', 'Cuotas'],
+        recommended_for: ['Transferencias económicas'],
+      },
     };
-
-    return gatewayInfo[gateway] || { name: gateway, description: 'Información no disponible' };
+    return info[gateway] || { name: gateway, description: 'Información no disponible' };
   }
 
-  /**
-   * Recomendar la mejor pasarela según criterios
-   */
+  /** Listado de pasarelas disponibles */
+  getAvailableGateways() {
+    return this.enabledGateways.map((gw) => ({
+      id: gw,
+      ...this.getGatewayInfo(gw),
+    }));
+  }
+
+  /** Recomendación simple (cost/speed/coverage) */
   recommendGateway(criteria = {}) {
-    const { 
-      amount, 
-      country = 'CL', 
-      priority = 'cost', // 'cost', 'speed', 'coverage'
-      paymentMethod = 'card' 
+    const {
+      amount,
+      country = 'CL',
+      priority = 'cost', // 'cost' | 'speed' | 'coverage'
+      paymentMethod = 'card',
     } = criteria;
 
-    let recommendations = [];
+    const recs = [];
 
-    // Lógica de recomendación
     if (country === 'CL') {
       if (priority === 'cost') {
         if (paymentMethod === 'transfer' && this.enabledGateways.includes('bancoestado')) {
-          recommendations.push({ gateway: 'bancoestado', score: 10, reason: 'Transferencias más económicas en Chile' });
+          recs.push({ gateway: 'bancoestado', score: 10, reason: 'Transferencias económicas en Chile' });
         }
         if (this.enabledGateways.includes('transbank')) {
-          recommendations.push({ gateway: 'transbank', score: 9, reason: 'Tarifas preferenciales para Chile' });
+          recs.push({ gateway: 'transbank', score: 9, reason: 'Tarifas preferenciales locales' });
         }
         if (this.enabledGateways.includes('mercadopago')) {
-          recommendations.push({ gateway: 'mercadopago', score: 7, reason: 'Buenas tarifas regionales' });
+          recs.push({ gateway: 'mercadopago', score: 7, reason: 'Buena tarifa regional' });
         }
         if (this.enabledGateways.includes('stripe')) {
-          recommendations.push({ gateway: 'stripe', score: 6, reason: 'Opción internacional confiable' });
+          recs.push({ gateway: 'stripe', score: 6, reason: 'Opción internacional confiable' });
         }
       } else if (priority === 'speed') {
-        if (this.enabledGateways.includes('stripe')) {
-          recommendations.push({ gateway: 'stripe', score: 10, reason: 'Procesamiento más rápido' });
-        }
-        if (this.enabledGateways.includes('mercadopago')) {
-          recommendations.push({ gateway: 'mercadopago', score: 8, reason: 'Integración ágil' });
-        }
+        if (this.enabledGateways.includes('stripe')) recs.push({ gateway: 'stripe', score: 10, reason: 'Procesamiento rápido' });
+        if (this.enabledGateways.includes('mercadopago')) recs.push({ gateway: 'mercadopago', score: 8, reason: 'Integración ágil' });
       }
     } else {
-      // Para otros países, priorizar cobertura internacional
-      if (this.enabledGateways.includes('stripe')) {
-        recommendations.push({ gateway: 'stripe', score: 10, reason: 'Mejor cobertura internacional' });
-      }
-      if (this.enabledGateways.includes('mercadopago')) {
-        recommendations.push({ gateway: 'mercadopago', score: 8, reason: 'Buena cobertura en Latinoamérica' });
-      }
+      if (this.enabledGateways.includes('stripe')) recs.push({ gateway: 'stripe', score: 10, reason: 'Cobertura internacional' });
+      if (this.enabledGateways.includes('mercadopago')) recs.push({ gateway: 'mercadopago', score: 8, reason: 'LatAm friendly' });
     }
 
-    // Ordenar por score y retornar la mejor opción
-    recommendations.sort((a, b) => b.score - a.score);
-    
-    return recommendations.length > 0 
-      ? recommendations[0] 
-      : { gateway: this.defaultGateway, score: 5, reason: 'Pasarela por defecto' };
+    recs.sort((a, b) => b.score - a.score);
+    return recs[0] || { gateway: this.defaultGateway, score: 5, reason: 'Pasarela por defecto' };
   }
 
   /**
-   * Crear pago usando la pasarela especificada o recomendada
+   * Crear pago (ahora usando DEUDAS del alumno)
+   * @param {string|number} apoderadoId
+   * @param {number[]} deudaIds  // alias de cuotaIds/cobroIds
    */
-  async createPayment(apoderadoId, cuotaIds, options = {}) {
+  async createPayment(apoderadoId, deudaIds, options = {}) {
+    const { gateway, alumnoId, paymentMethod = 'card', country = 'CL' } = options;
+
     try {
-      const { 
-        gateway, 
-        alumnoId, 
-        paymentMethod = 'card',
-        country = 'CL'
-      } = options;
+      // Elige pasarela
+      let selectedGateway = (gateway || this.recommendGateway({ country, paymentMethod, priority: 'cost' }).gateway || this.defaultGateway).toLowerCase();
 
-      // Determinar pasarela a usar
-      let selectedGateway = gateway;
-      if (!selectedGateway) {
-        const recommendation = this.recommendGateway({
-          country,
-          paymentMethod,
-          priority: 'cost'
-        });
-        selectedGateway = recommendation.gateway;
-        Logger.info('Pasarela recomendada automáticamente', {
-          gateway: selectedGateway,
-          reason: recommendation.reason
-        });
-      }
-
-      // Verificar que la pasarela esté habilitada
       if (!this.enabledGateways.includes(selectedGateway)) {
         throw new Error(`Pasarela ${selectedGateway} no está habilitada`);
       }
 
-      // Crear pago según la pasarela seleccionada
+      // Ejecuta creación según pasarela
       let result;
       switch (selectedGateway) {
         case 'stripe':
-          result = await this.services.stripe.createPaymentIntent(apoderadoId, cuotaIds, alumnoId);
+          // Si tu Stripe sigue esperando "cuotaIds", pásale deudaIds (misma semántica)
+          result = await this.services.stripe.createPaymentIntent(apoderadoId, deudaIds, alumnoId);
           break;
         case 'transbank':
-          result = await this.services.transbank.createTransaction(apoderadoId, cuotaIds, alumnoId);
+          result = await this.services.transbank.createTransaction(apoderadoId, deudaIds, alumnoId);
           break;
         case 'mercadopago':
-          result = await this.services.mercadopago.createPreference(apoderadoId, cuotaIds, alumnoId);
+          // Mercado Pago: preferencia con deudas dirigidas
+          result = await this.services.mercadopago.createPreference(apoderadoId, deudaIds, alumnoId);
           break;
         case 'bancoestado':
-          result = await this.services.bancoestado.createPaymentOrder(apoderadoId, cuotaIds, alumnoId);
+          result = await this.services.bancoestado.createPaymentOrder(apoderadoId, deudaIds, alumnoId);
           break;
         default:
           throw new Error(`Pasarela ${selectedGateway} no soportada`);
       }
 
-      Logger.info('Pago creado exitosamente', {
-        gateway: selectedGateway,
-        apoderadoId,
-        cuotaIds
-      });
+      Logger.info('Pago creado', { gateway: selectedGateway, apoderadoId, deudaIds });
 
       return {
         gateway: selectedGateway,
         gateway_info: this.getGatewayInfo(selectedGateway),
-        ...result
+        ...result,
       };
     } catch (error) {
-      Logger.error('Error al crear pago unificado', {
-        error: error.message,
-        apoderadoId,
-        cuotaIds,
-        options
-      });
+      Logger.error('createPayment error', { error: error.message, apoderadoId, deudaIds, options });
       throw error;
     }
   }
 
-  /**
-   * Confirmar pago según la pasarela
-   */
+  /** Confirmación según gateway */
   async confirmPayment(gateway, paymentData) {
     try {
-      if (!this.enabledGateways.includes(gateway)) {
-        throw new Error(`Pasarela ${gateway} no está habilitada`);
-      }
+      const gw = (gateway || '').toLowerCase();
+      if (!this.enabledGateways.includes(gw)) throw new Error(`Pasarela ${gw} no está habilitada`);
 
       let result;
-      switch (gateway) {
+      switch (gw) {
         case 'stripe':
           result = await this.services.stripe.confirmPayment(paymentData.payment_intent_id);
           break;
@@ -268,150 +207,117 @@ class UnifiedPaymentService {
           result = await this.services.transbank.confirmTransaction(paymentData.token);
           break;
         case 'mercadopago':
-          result = await this.services.mercadopago.processPaymentNotification(paymentData.payment_id);
+          // Para MP puedes mandar { payment_id } o { id }
+          result = await this.services.mercadopago.processPaymentNotification(
+            paymentData.payment_id || paymentData.id
+          );
           break;
         case 'bancoestado':
           result = await this.services.bancoestado.processWebhook(paymentData);
           break;
         default:
-          throw new Error(`Confirmación no soportada para ${gateway}`);
+          throw new Error(`Confirmación no soportada para ${gw}`);
       }
 
-      Logger.info('Pago confirmado exitosamente', {
-        gateway,
-        paymentData
-      });
-
-      return {
-        gateway,
-        ...result
-      };
+      Logger.info('Pago confirmado', { gateway: gw });
+      return { gateway: gw, ...result };
     } catch (error) {
-      Logger.error('Error al confirmar pago unificado', {
-        error: error.message,
-        gateway,
-        paymentData
-      });
+      Logger.error('confirmPayment error', { error: error.message, gateway, paymentData });
       throw error;
     }
   }
 
-  /**
-   * Obtener historial consolidado de pagos
-   */
+  /** Historial consolidado (sin desfases de índice) */
   async getConsolidatedPaymentHistory(apoderadoId, limit = 50) {
     try {
-      const histories = await Promise.allSettled([
-        this.enabledGateways.includes('stripe') 
-          ? this.services.stripe.getPaymentHistory(apoderadoId, limit)
-          : Promise.resolve([]),
-        this.enabledGateways.includes('transbank')
-          ? this.services.transbank.getPaymentHistory(apoderadoId, limit)
-          : Promise.resolve([]),
-        this.enabledGateways.includes('mercadopago')
-          ? this.services.mercadopago.getPaymentHistory(apoderadoId, limit)
-          : Promise.resolve([]),
-        this.enabledGateways.includes('bancoestado')
-          ? this.services.bancoestado.getPaymentHistory(apoderadoId, limit)
-          : Promise.resolve([])
-      ]);
+      const tasks = [];
 
-      // Consolidar resultados
-      const allPayments = [];
-      histories.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          allPayments.push(...result.value);
+      if (this.enabledGateways.includes('stripe')) {
+        tasks.push(['stripe', this.services.stripe.getPaymentHistory(apoderadoId, limit)]);
+      }
+      if (this.enabledGateways.includes('transbank')) {
+        tasks.push(['transbank', this.services.transbank.getPaymentHistory(apoderadoId, limit)]);
+      }
+      if (this.enabledGateways.includes('mercadopago')) {
+        tasks.push(['mercadopago', this.services.mercadopago.getPaymentHistory(apoderadoId, limit)]);
+      }
+      if (this.enabledGateways.includes('bancoestado')) {
+        tasks.push(['bancoestado', this.services.bancoestado.getPaymentHistory(apoderadoId, limit)]);
+      }
+
+      const settled = await Promise.allSettled(tasks.map(([, p]) => p));
+      const all = [];
+
+      settled.forEach((r, idx) => {
+        const gw = tasks[idx][0];
+        if (r.status === 'fulfilled') {
+          all.push(...(r.value || []));
         } else {
-          Logger.warn('Error al obtener historial de una pasarela', {
-            gateway: this.enabledGateways[index],
-            error: result.reason
-          });
+          Logger.warn('Historial pasarela falló', { gateway: gw, error: r.reason?.message || String(r.reason) });
         }
       });
 
-      // Ordenar por fecha de pago descendente
-      allPayments.sort((a, b) => new Date(b.fecha_pago) - new Date(a.fecha_pago));
-
-      return allPayments.slice(0, limit);
+      all.sort((a, b) => new Date(b.fecha_pago) - new Date(a.fecha_pago));
+      return all.slice(0, limit);
     } catch (error) {
-      Logger.error('Error al obtener historial consolidado', {
-        error: error.message,
-        apoderadoId
-      });
+      Logger.error('getConsolidatedPaymentHistory error', { error: error.message, apoderadoId });
       throw error;
     }
   }
 
-  /**
-   * Obtener estadísticas de uso de pasarelas
-   */
-  async getGatewayStats(apoderadoId = null) {
+  /** Estadísticas básicas */
+  async getGatewayStats(_apoderadoId = null) {
     try {
-      // Esta función requeriría consultas más complejas a la base de datos
-      // Por ahora retornamos información básica
       return {
         enabled_gateways: this.enabledGateways,
         default_gateway: this.defaultGateway,
-        gateway_info: this.enabledGateways.map(g => ({
-          id: g,
-          ...this.getGatewayInfo(g)
-        }))
+        gateway_info: this.enabledGateways.map((g) => ({ id: g, ...this.getGatewayInfo(g) })),
       };
     } catch (error) {
-      Logger.error('Error al obtener estadísticas de pasarelas', {
-        error: error.message
-      });
+      Logger.error('getGatewayStats error', { error: error.message });
       throw error;
     }
   }
 
   /**
-   * Procesar webhook según la pasarela
+   * Webhook unificado — para MP aceptamos body o query
+   * @param {string} gateway
+   * @param {object} body
+   * @param {object} query
    */
-  async processWebhook(gateway, webhookData) {
+  async processWebhook(gateway, body = {}, query = {}) {
     try {
-      if (!this.enabledGateways.includes(gateway)) {
-        throw new Error(`Pasarela ${gateway} no está habilitada`);
-      }
+      const gw = (gateway || '').toLowerCase();
+      if (!this.enabledGateways.includes(gw)) throw new Error(`Pasarela ${gw} no está habilitada`);
 
       let result;
-      switch (gateway) {
+      switch (gw) {
         case 'stripe':
-          result = await this.services.stripe.handleStripeWebhook(webhookData);
+          result = await this.services.stripe.handleStripeWebhook(body);
           break;
         case 'transbank':
-          // Transbank no usa webhooks tradicionales, usa confirmación directa
           result = { processed: false, reason: 'Transbank no usa webhooks' };
           break;
-        case 'mercadopago':
-          result = await this.services.mercadopago.processWebhook(webhookData);
+        case 'mercadopago': {
+          // MP a veces envía ?type=payment&id=... como query, otras veces JSON { type, data:{id} }
+          const payload = Object.keys(body || {}).length ? body : query;
+          result = await this.services.mercadopago.processWebhook(payload);
           break;
+        }
         case 'bancoestado':
-          result = await this.services.bancoestado.processWebhook(webhookData);
+          result = await this.services.bancoestado.processWebhook(body);
           break;
         default:
-          throw new Error(`Webhook no soportado para ${gateway}`);
+          throw new Error(`Webhook no soportado para ${gw}`);
       }
 
-      Logger.info('Webhook procesado exitosamente', {
-        gateway,
-        result
-      });
-
-      return {
-        gateway,
-        ...result
-      };
+      Logger.info('Webhook procesado', { gateway: gw, ok: true });
+      return { gateway: gw, ...result };
     } catch (error) {
-      Logger.error('Error al procesar webhook unificado', {
-        error: error.message,
-        gateway,
-        webhookData
-      });
+      Logger.error('processWebhook error', { error: error.message, gateway, body, query });
       throw error;
     }
   }
 }
 
 module.exports = UnifiedPaymentService;
-
