@@ -275,11 +275,12 @@ export const usePayments = () => {
     setIsLoading(true); setError(null);
     try {
       const resp = await paymentsAPI.createPayment(id, paymentData, token);
-      if (resp?.success) return resp.data;
-      throw new Error(resp?.message || 'Error al crear pago');
+      // Ya viene desanidado (objeto con init_point/preference_id)
+      return resp;
     } catch (err) { setError(err.message); throw err; }
     finally { setIsLoading(false); }
   }, [user]);
+
 
   const testGateways = useCallback(async () => {
     setIsLoading(true); setError(null);

@@ -104,40 +104,44 @@ export default function ApoderadoPagos() {
   };
 
   const handleProcessPayment = async () => {
-    if (selectedDeudas.length === 0) {
-      toast.error('Selecciona al menos una deuda para pagar');
-      return;
-    }
-    if (!selectedGateway) {
-      toast.error('Selecciona un método de pago');
-      return;
-    }
+    if (selectedDeudas.length === 0) { toast.error('Selecciona al menos una deuda'); return; }
+    if (!selectedGateway) { toast.error('Selecciona un método de pago'); return; }
 
     setIsProcessing(true);
     try {
-      // El backend ya normaliza deuda_ids -> cuota_ids
       const payload = {
-        deuda_ids: selectedDeudas,
+        deuda_ids: selectedDeudas,       // <-- snake_case
         gateway: selectedGateway,
         payment_method: 'card',
         country: 'CL',
       };
 
       const result = await createPayment(payload);
-      // result ejemplo (MP): { gateway:'mercadopago', preference_id, init_point, sandbox_init_point, ... }
+      console.log('createPayment result ===>', result);
 
-      if (result?.gateway === 'mercadopago') {
-        const go = result.init_point || result.sandbox_init_point;
-        if (!go) throw new Error('No se recibió init_point de Mercado Pago');
-        // Redirige al checkout de Mercado Pago
-        window.location.href = go;
-        return; // importante: no seguir flujo local
+      const initPoint =
+        result?.init_point ??
+        result?.initPoint ??
+        result?.body?.init_point ??
+        result?.sandbox_init_point ??
+        result?.sandboxInitPoint ??
+        result?.body?.sandbox_init_point;
+
+      if (initPoint) { window.location.assign(initPoint); return; }
+
+      const prefId =
+        result?.preference_id ??
+        result?.preferenceId ??
+        result?.body?.id;
+
+      if (prefId) {
+        window.location.assign(`https://www.mercadopago.com/checkout/v1/redirect?pref_id=${prefId}`);
+        return;
       }
 
-      // Otros gateways (placeholder)
-      toast.success('Pago creado. Sigue las instrucciones de la pasarela seleccionada.');
-      setTimeout(() => navigate('/apoderado/dashboard'), 1500);
+      throw new Error('No se recibió URL de checkout (init_point o pref_id).');
     } catch (error) {
+      console.error(error);
       toast.error(error.message || 'Error al procesar el pago');
     } finally {
       setIsProcessing(false);

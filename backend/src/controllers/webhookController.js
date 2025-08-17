@@ -1,85 +1,43 @@
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+// src/controllers/webhookController.js
 const PaymentService = require('../services/paymentService');
 const Logger = require('../utils/logger');
 
 class WebhookController {
   /**
-   * Manejar webhooks de Stripe
+   * Webhook de Mercado Pago
+   * Ruta sugerida: POST /api/payments/webhooks/mercadopago
    */
-  static async handleStripeWebhook(req, res) {
-    const sig = req.headers['stripe-signature'];
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-    let event;
-
+  static async mercadopago(req, res) {
     try {
-      // Verificar la firma del webhook
-      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      const result = await PaymentService.handleWebhook('mercadopago', req.body, req.query);
+      // Responder 200 rápido para evitar reintentos de MP
+      return res.status(200).json({ success: true, ...result });
     } catch (err) {
-      Logger.error('Error al verificar webhook de Stripe', {
-        error: err.message,
-        signature: sig
-      });
-      
-      return res.status(400).json({
-        success: false,
-        message: 'Webhook signature verification failed'
-      });
-    }
-
-    try {
-      // Procesar el evento
-      await PaymentService.handleStripeWebhook(event);
-
-      Logger.info('Webhook de Stripe procesado exitosamente', {
-        eventType: event.type,
-        eventId: event.id
-      });
-
-      res.json({
-        success: true,
-        message: 'Webhook processed successfully'
-      });
-    } catch (error) {
-      Logger.error('Error al procesar webhook de Stripe', {
-        error: error.message,
-        eventType: event.type,
-        eventId: event.id
-      });
-
-      res.status(500).json({
-        success: false,
-        message: 'Error processing webhook',
-        error: error.message
-      });
+      Logger.error('Webhook MP error', { error: err.message });
+      return res.status(500).json({ success: false, error: 'Webhook processing failed' });
     }
   }
 
   /**
-   * Endpoint de prueba para webhooks
+   * Endpoint de prueba opcional
+   * Ruta sugerida: POST /api/payments/webhooks/test
    */
   static async testWebhook(req, res) {
     try {
       Logger.info('Webhook de prueba recibido', {
+        headers: req.headers,
         body: req.body,
-        headers: req.headers
       });
-
-      res.json({
+      return res.json({
         success: true,
         message: 'Test webhook received',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
-    } catch (error) {
-      Logger.error('Error en webhook de prueba', { error: error.message });
-      res.status(500).json({
-        success: false,
-        message: 'Error in test webhook',
-        error: error.message
-      });
+    } catch (err) {
+      Logger.error('Error en webhook de prueba', { error: err.message });
+      return res.status(500).json({ success: false, error: 'Error in test webhook' });
     }
   }
 }
 
 module.exports = WebhookController;
-

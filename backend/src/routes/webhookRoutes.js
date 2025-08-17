@@ -1,24 +1,20 @@
+// src/routes/webhookRoutes.js
 const express = require('express');
 const router = express.Router();
 const WebhookController = require('../controllers/webhookController');
 
-// Middleware para procesar raw body (necesario para webhooks de Stripe)
-const rawBodyMiddleware = express.raw({ type: 'application/json' });
+// <-- acepta urlencoded y json (orden importante)
+router.post(
+  '/mercadopago',
+  express.urlencoded({ extended: false }),
+  express.json(),
+  WebhookController.mercadopago
+);
 
-// Webhook de Stripe (requiere raw body)
-router.post('/stripe', rawBodyMiddleware, WebhookController.handleStripeWebhook);
+router.post('/test', express.json(), WebhookController.testWebhook);
 
-// Webhook de prueba
-router.post('/test', WebhookController.testWebhook);
-
-// Endpoint de salud para webhooks
 router.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Webhook endpoints are healthy',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ success: true, message: 'Webhook endpoints are healthy', timestamp: new Date().toISOString() });
 });
 
 module.exports = router;
-
