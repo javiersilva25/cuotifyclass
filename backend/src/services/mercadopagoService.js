@@ -1,7 +1,12 @@
 // src/services/mercadoPagoService.js
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
-const { CobroAlumno, Alumno, Curso, Usuario } = require('../models');
+const models = require('../models');
 const Logger = require('../utils/logger');
+
+const CobroAlumno = models?.CobroAlumno;
+const Alumno      = models?.Alumno;
+const Curso       = models?.Curso;
+const Usuario     = models?.Usuario || null;
 
 class MercadoPagoService {
   constructor() {
@@ -19,42 +24,62 @@ class MercadoPagoService {
     });
 
     this.preferences = new Preference(this.client);
-    this.payments = new Payment(this.client);
+    this.payments    = new Payment(this.client);
 
-    // URLs
-    this.apiUrl = process.env.API_URL || process.env.BASE_URL || 'http://localhost:3001';
-    this.appUrl = process.env.APP_URL || 'http://localhost:3002';
+    // Bases para construir URLs
+    this.publicBase = process.env.PUBLIC_BASE_URL || process.env.API_URL || process.env.BASE_URL || 'http://localhost:3000';
+    this.appUrl     = process.env.APP_URL || this.publicBase; // si no hay front público, usa el back
+
+    // Back URLs (en orden de prioridad)
+    this.successUrl =
+      process.env.MP_SUCCESS_URL ||
+      process.env.PAYMENT_SUCCESS_URL ||
+      `${this.appUrl.replace(/\/+$/, '')}/payment/success`;
+
+    this.failureUrl =
+      process.env.MP_FAILURE_URL ||
+      process.env.PAYMENT_CANCEL_URL ||
+      `${this.appUrl.replace(/\/+$/, '')}/payment/failure`;
+
+    this.pendingUrl =
+      process.env.MP_PENDING_URL ||
+      `${this.appUrl.replace(/\/+$/, '')}/payment/pending`;
+
+    // Webhook unificado
+    this.webhookUrl = `${this.publicBase.replace(/\/+$/, '')}/api/payments/webhooks/mercadopago`;
   }
 
-  /**
-   * Crea una preferencia para pagar deudas (CobroAlumno).
-   * @param {number|string} apoderadoId
-   * @param {Array<number>} deudaIds
-   */
   async createPreference(apoderadoId, deudaIds = []) {
     if (!apoderadoId) throw new Error('apoderadoId requerido');
     if (!Array.isArray(deudaIds) || deudaIds.length === 0) {
       throw new Error('deudaIds vacío');
     }
 
-    // Payer opcional (no bloquea)
-    const payer = await Usuario.findByPk(apoderadoId).catch(() => null);
-
-    // Traer deudas pendientes
-    const deudas = await CobroAlumno.findAll({
-      where: { id: deudaIds, estado: 'pendiente' },
-      include: [
-        { model: Alumno, as: 'alumno', attributes: ['id', 'nombre'] },
-        { model: Curso,  as: 'curso',  attributes: ['id', 'nombre_curso'] },
-      ],
-    });
-
-    if (!deudas.length) {
-      throw new Error('No hay deudas pendientes para pagar');
+    // Payer opcional y protegido
+    let payer = null;
+    if (Usuario?.findByPk) {
+      try { payer = await Usuario.findByPk(apoderadoId); } catch {}
     }
 
+    // include condicional para no romper si no existen asociaciones
+    const include = [];
+    if (CobroAlumno?.associations?.alumno) include.push({ association: 'alumno', attributes: ['id', 'nombre'] });
+    if (CobroAlumno?.associations?.curso)  include.push({ association: 'curso',  attributes: ['id', 'nombre_curso'] });
+
+    const where = { id: deudaIds, estado: 'pendiente' };
+    let deudas;
+    try {
+      deudas = await CobroAlumno.findAll(include.length ? { where, include } : { where });
+    } catch {
+      deudas = await CobroAlumno.findAll({ where });
+    }
+    if (!deudas?.length) throw new Error('No hay deudas pendientes para pagar');
+
+    const getAlumnoNombre = (d) =>
+      d?.alumno?.nombre || d?.Alumno?.nombre || d?.alumno_nombre || (d?.alumno_id ? `Alumno ${d.alumno_id}` : 'Alumno');
+
     const items = deudas.map(d => ({
-      title: `${d.concepto || 'Cuota'} - ${d.alumno?.nombre || 'Alumno'}`,
+      title: `${d.concepto || d.descripcion || 'Cuota'} - ${getAlumnoNombre(d)}`,
       quantity: 1,
       currency_id: 'CLP',
       unit_price: Number(d.monto || 0),
@@ -70,14 +95,14 @@ class MercadoPagoService {
       } : undefined,
       external_reference,
       back_urls: {
-        success: `${this.appUrl}/apoderado/pago-exitoso`,
-        pending: `${this.appUrl}/apoderado/pago-pendiente`,
-        failure: `${this.appUrl}/apoderado/pago-error`,
+        success: this.successUrl,
+        pending: this.pendingUrl,
+        failure: this.failureUrl,
       },
       auto_return: 'approved',
-      notification_url: `${this.apiUrl}/api/payments/mercadopago/webhook`,
+      notification_url: this.webhookUrl,
       metadata: {
-        apoderado_id: apoderadoId,
+        apoderado_id: String(apoderadoId),
         deuda_ids: deudas.map(d => d.id),
       },
     };
@@ -88,38 +113,30 @@ class MercadoPagoService {
       preference_id: pref.id,
       apoderado_id: apoderadoId,
       deuda_ids: deudas.map(d => d.id),
+      back_urls: body.back_urls,
+      notification_url: body.notification_url,
     });
 
     return {
+      gateway: 'mercadopago',
       preference_id: pref.id,
       init_point: pref.init_point,
       sandbox_init_point: pref.sandbox_init_point,
     };
   }
 
-  /**
-   * Webhook de Mercado Pago (llámalo desde tu ruta /mercadopago/webhook)
-   * Acepta payload con { type, data:{ id } } o query ?topic=payment&id=...
-   */
   async processWebhook(payload = {}, query = {}) {
-    const topic = payload?.type || query?.topic;
-    const id    = payload?.data?.id || query?.id;
-
-    if (topic !== 'payment' || !id) {
-      return { processed: false, reason: 'Ignorado' };
-    }
+    const topic = payload?.type || payload?.topic || query?.topic || query?.type;
+    const id    = payload?.data?.id || payload?.id || query?.id;
+    if ((topic !== 'payment' && topic !== 'payments') || !id) return { processed: false, reason: 'Ignorado' };
     return this._processPayment(id);
   }
 
-  // ---- internos ----
   async _processPayment(paymentId) {
     const payment = await this.payments.get({ id: paymentId });
     Logger.info('MP payment recibido', { id: paymentId, status: payment?.status });
 
-    const deudaIds = Array.isArray(payment?.metadata?.deuda_ids)
-      ? payment.metadata.deuda_ids
-      : [];
-
+    const deudaIds = Array.isArray(payment?.metadata?.deuda_ids) ? payment.metadata.deuda_ids : [];
     const apoderadoId = payment?.metadata?.apoderado_id || null;
 
     if (payment?.status === 'approved' && deudaIds.length) {
@@ -138,6 +155,14 @@ class MercadoPagoService {
     }
 
     return { processed: true, status: payment?.status || 'unknown' };
+  }
+
+  validateConfiguration() {
+    const token = process.env.MP_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if (!token) throw new Error('MP access token no configurado');
+    const isProd = token.startsWith('APP_USR');
+    const isTest = token.startsWith('TEST');
+    return { configured: true, environment: isProd ? 'production' : (isTest ? 'test' : 'unknown') };
   }
 }
 

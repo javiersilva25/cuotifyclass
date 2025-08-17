@@ -1,3 +1,4 @@
+// src/pages/apoderado/ApoderadoPagos.jsx
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
@@ -27,7 +28,7 @@ import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
-import  Navbar  from '../../pages/Navbar.jsx';
+// import Navbar from '../../pages/Navbar.jsx'; // opcional (no se usa aquí)
 
 export default function ApoderadoPagos() {
   const navigate = useNavigate();
@@ -54,27 +55,28 @@ export default function ApoderadoPagos() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Cargar datos al montar
-  useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+  useEffect(() => { refreshData(); }, [refreshData]);
 
   // Seleccionar todas las deudas por defecto
   useEffect(() => {
     if (deudasPendientes.length > 0) {
       setSelectedDeudas(deudasPendientes.map(d => d.id));
+    } else {
+      setSelectedDeudas([]);
     }
   }, [deudasPendientes]);
 
-  // Obtener recomendación cuando cambian las deudas seleccionadas
+  // Obtener recomendación y comparación cuando cambien las deudas seleccionadas
   useEffect(() => {
     if (selectedDeudas.length > 0) {
       const total = selectedDeudas.reduce((sum, deudaId) => {
         const deuda = deudasPendientes.find(d => d.id === deudaId);
         return sum + (deuda?.monto || 0);
       }, 0);
-      
-      getRecommendation({ amount: total });
-      compareGateways(total);
+      if (total > 0) {
+        getRecommendation({ amount: total });
+        compareGateways(total);
+      }
     }
   }, [selectedDeudas, deudasPendientes, getRecommendation, compareGateways]);
 
@@ -106,32 +108,35 @@ export default function ApoderadoPagos() {
       toast.error('Selecciona al menos una deuda para pagar');
       return;
     }
-
     if (!selectedGateway) {
       toast.error('Selecciona un método de pago');
       return;
     }
 
     setIsProcessing(true);
-
     try {
-      const paymentData = {
-        cuota_ids: selectedDeudas,
+      // El backend ya normaliza deuda_ids -> cuota_ids
+      const payload = {
+        deuda_ids: selectedDeudas,
         gateway: selectedGateway,
         payment_method: 'card',
-        country: 'CL'
+        country: 'CL',
       };
 
-      const result = await createPayment(paymentData);
-      
-      // Simular procesamiento exitoso
-      toast.success('¡Pago procesado exitosamente!');
-      
-      // Redirigir al dashboard después de un breve delay
-      setTimeout(() => {
-        navigate('/apoderado/dashboard');
-      }, 2000);
-      
+      const result = await createPayment(payload);
+      // result ejemplo (MP): { gateway:'mercadopago', preference_id, init_point, sandbox_init_point, ... }
+
+      if (result?.gateway === 'mercadopago') {
+        const go = result.init_point || result.sandbox_init_point;
+        if (!go) throw new Error('No se recibió init_point de Mercado Pago');
+        // Redirige al checkout de Mercado Pago
+        window.location.href = go;
+        return; // importante: no seguir flujo local
+      }
+
+      // Otros gateways (placeholder)
+      toast.success('Pago creado. Sigue las instrucciones de la pasarela seleccionada.');
+      setTimeout(() => navigate('/apoderado/dashboard'), 1500);
     } catch (error) {
       toast.error(error.message || 'Error al procesar el pago');
     } finally {
@@ -164,7 +169,7 @@ export default function ApoderadoPagos() {
     }
   };
 
-  if (loadingData) {
+  if (loadingData || loadingPayments) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -215,11 +220,7 @@ export default function ApoderadoPagos() {
                       Selecciona las cuotas que deseas pagar
                     </CardDescription>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleSelectAll}
-                  >
+                  <Button variant="outline" size="sm" onClick={handleSelectAll}>
                     {selectedDeudas.length === deudasPendientes.length ? 'Deseleccionar' : 'Seleccionar'} Todas
                   </Button>
                 </div>
@@ -227,15 +228,17 @@ export default function ApoderadoPagos() {
               <CardContent className="space-y-4">
                 {deudasPendientes.map((deuda, index) => {
                   const isSelected = selectedDeudas.includes(deuda.id);
-                  const isVencida = new Date(deuda.fecha_limite) < new Date();
-                  const hijo = hijos.find(h => h.id === deuda.alumno_id);
-                  
+                  const fecha = deuda.fecha_limite ? new Date(deuda.fecha_limite) : null;
+                  const isVencida = fecha ? fecha < new Date() : false;
+                  const hijo = hijos.find(h => String(h.id) === String(deuda.alumno_id));
+                  const nombreHijo = hijo?.nombre_completo || 'Estudiante';
+
                   return (
                     <motion.div
                       key={deuda.id}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.1 }}
+                      transition={{ delay: index * 0.06 }}
                       className={`p-4 border rounded-lg cursor-pointer transition-all ${
                         isSelected 
                           ? 'border-green-500 bg-green-50' 
@@ -248,7 +251,7 @@ export default function ApoderadoPagos() {
                       <div className="flex items-center space-x-4">
                         <Checkbox 
                           checked={isSelected}
-                          onChange={() => handleDeudaToggle(deuda.id)}
+                          onCheckedChange={() => handleDeudaToggle(deuda.id)}
                         />
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
@@ -258,19 +261,19 @@ export default function ApoderadoPagos() {
                           <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
                             <div>
                               <span>Estudiante: </span>
-                              <span className="font-medium">{hijo?.nombre} {hijo?.apellido}</span>
+                              <span className="font-medium">{nombreHijo}</span>
                             </div>
                             <div>
                               <span>Vencimiento: </span>
                               <span className={`font-medium ${isVencida ? 'text-red-600' : ''}`}>
-                                {format(new Date(deuda.fecha_limite), 'dd MMM yyyy', { locale: es })}
+                                {fecha ? format(fecha, 'dd MMM yyyy', { locale: es }) : '—'}
                               </span>
                             </div>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="text-lg font-bold text-green-600">
-                            ${deuda.monto.toLocaleString('es-CL')}
+                            ${Number(deuda.monto || 0).toLocaleString('es-CL')}
                           </p>
                         </div>
                       </div>
@@ -341,7 +344,7 @@ export default function ApoderadoPagos() {
                                 <span className="text-gray-500">Comisión: {gateway.fees}</span>
                                 {comparisonData && (
                                   <span className="font-medium text-green-600">
-                                    Costo estimado: ${comparisonData.estimated_fee.toLocaleString('es-CL')}
+                                    Costo estimado: ${Number(comparisonData.estimated_fee || 0).toLocaleString('es-CL')}
                                   </span>
                                 )}
                               </div>
@@ -372,16 +375,16 @@ export default function ApoderadoPagos() {
                         className="mt-4 p-4 bg-gray-50 rounded-lg"
                       >
                         <h4 className="font-semibold mb-3">
-                          Comparación para ${totalSeleccionado.toLocaleString('es-CL')} CLP
+                          Comparación para ${Number(totalSeleccionado || 0).toLocaleString('es-CL')} CLP
                         </h4>
                         <div className="space-y-2">
-                          {comparison.comparison.map((item, index) => (
+                          {(comparison.comparison || []).map((item, index) => (
                             <div key={item.gateway} className="flex items-center justify-between text-sm">
                               <span className={`font-medium ${index === 0 ? 'text-green-600' : ''}`}>
                                 {item.name} {index === 0 && '(Más económico)'}
                               </span>
                               <span className={`${index === 0 ? 'text-green-600 font-bold' : ''}`}>
-                                ${item.estimated_fee.toLocaleString('es-CL')} CLP
+                                ${Number(item.estimated_fee || 0).toLocaleString('es-CL')} CLP
                               </span>
                             </div>
                           ))}
@@ -408,13 +411,13 @@ export default function ApoderadoPagos() {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Subtotal:</span>
-                    <span className="font-medium">${totalSeleccionado.toLocaleString('es-CL')}</span>
+                    <span className="font-medium">${Number(totalSeleccionado || 0).toLocaleString('es-CL')}</span>
                   </div>
                   {selectedGateway && comparison && (
                     <div className="flex justify-between text-sm">
                       <span>Comisión estimada:</span>
                       <span className="font-medium text-red-600">
-                        ${comparison.comparison.find(c => c.gateway === selectedGateway)?.estimated_fee.toLocaleString('es-CL') || '0'}
+                        ${Number(comparison.comparison?.find(c => c.gateway === selectedGateway)?.estimated_fee || 0).toLocaleString('es-CL')}
                       </span>
                     </div>
                   )}
@@ -424,7 +427,7 @@ export default function ApoderadoPagos() {
 
                 <div className="flex justify-between font-bold text-lg">
                   <span>Total a pagar:</span>
-                  <span className="text-green-600">${totalSeleccionado.toLocaleString('es-CL')}</span>
+                  <span className="text-green-600">${Number(totalSeleccionado || 0).toLocaleString('es-CL')}</span>
                 </div>
 
                 {recommendation && selectedGateway === recommendation.gateway && (
@@ -434,27 +437,6 @@ export default function ApoderadoPagos() {
                       ¡Excelente elección! Estás usando la opción más económica.
                     </AlertDescription>
                   </Alert>
-                )}
-
-                {selectedGateway && (
-                  <div className="space-y-2">
-                    <h4 className="font-semibold text-sm">Método seleccionado:</h4>
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-8 h-8 rounded bg-gradient-to-br ${getGatewayColor(selectedGateway)} flex items-center justify-center text-white`}>
-                          {getGatewayIcon(selectedGateway)}
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">
-                            {gateways.find(g => g.id === selectedGateway)?.name}
-                          </p>
-                          <p className="text-xs text-gray-600">
-                            {gateways.find(g => g.id === selectedGateway)?.fees}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 )}
 
                 <Button 
@@ -491,4 +473,3 @@ export default function ApoderadoPagos() {
     </div>
   );
 }
-

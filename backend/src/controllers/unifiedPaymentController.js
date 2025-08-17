@@ -183,6 +183,28 @@ class UnifiedPaymentController {
       res.status(500).json({ success: false, message: 'Error interno del servidor', error: error.message });
     }
   }
+  async handleMpReturn(req, res) {
+    try {
+      const front = process.env.APP_URL || 'http://localhost:3002';
+
+      // MP puede enviar distintos nombres; nos quedamos con lo útil para el front
+      const status   = req.query.collection_status || req.query.status || 'unknown';
+      const payment  = req.query.payment_id || req.query.collection_id || '';
+      const pref     = req.query.preference_id || '';
+
+      // Decide destino en el front
+      let dest = '/apoderado/pago-exitoso';
+      if (status === 'pending') dest = '/apoderado/pago-pendiente';
+      if (status === 'failure' || status === 'rejected' || status === 'cancelled') dest = '/apoderado/pago-error';
+
+      const url = `${front}${dest}?status=${encodeURIComponent(status)}&payment_id=${encodeURIComponent(payment)}&preference_id=${encodeURIComponent(pref)}`;
+
+      return res.redirect(302, url);
+    } catch (error) {
+      Logger.error('Error en handleMpReturn', { error: error.message });
+      return res.status(500).json({ success: false, message: 'Error en retorno de Mercado Pago' });
+    }
+  }
 }
 
 module.exports = UnifiedPaymentController;

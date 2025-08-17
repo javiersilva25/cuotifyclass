@@ -179,12 +179,13 @@ export const paymentsAPI = {
   },
   async createPayment(apoderadoId, payload, token) {
     const { data } = await apiClient.post(
-      '/api/payments/create',
-      { apoderado_id: apoderadoId, ...payload },
+      `/api/payments/apoderados/${apoderadoId}/create`,
+      // el backend ya normaliza deuda_ids -> cuota_ids
+      { ...payload },
       { headers: authHeaders(token) }
     );
     return data;
-  },
+},
   async testGateways() {
     const { data } = await apiClient.get('/api/payments/test');
     return data;

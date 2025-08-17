@@ -36,11 +36,25 @@ router.get('/gateways/stats/:id?', controller.getGatewayStats.bind(controller));
 
 /* --------------------------------- Pagos ---------------------------------- */
 
-// Crear pago unificado (MP, TBK, Stripe, BancoEstado)
+// Crear pago unificado (ruta “oficial”)
 router.post(
   '/apoderados/:id/create',
   normalizeCreateBody,
   controller.createPayment.bind(controller)
+);
+
+// Alias para compatibilidad con el frontend que llama /api/payments/create
+router.post(
+  '/create',
+  normalizeCreateBody,
+  (req, res, next) => {
+    const apoderadoId = req.body?.apoderado_id || req.body?.apoderadoId || req.query?.apoderado_id;
+    if (!apoderadoId) {
+      return res.status(400).json({ success: false, message: 'apoderado_id es requerido' });
+    }
+    req.params.id = apoderadoId; // reusa el controller “oficial”
+    return controller.createPayment(req, res, next);
+  }
 );
 
 // Confirmación genérica (si alguna pasarela la usa explícitamente)
@@ -49,11 +63,45 @@ router.post('/confirm', controller.confirmPayment.bind(controller));
 // Historial consolidado
 router.get('/apoderados/:id/history', controller.getPaymentHistory.bind(controller));
 
+/* ----------------------------- Return URLs MP ------------------------------ */
+
+// Mercado Pago redirige aquí tras el checkout (success/failure/pending).
+// Confirmamos usando payment_id (o id) y redirigimos a las URLs del .env si existen.
+router.get('/return/mercadopago', async (req, res) => {
+  try {
+    const paymentId =
+      req.query.payment_id || req.query['data.id'] || req.query.id || req.body?.payment_id;
+    const status = (req.query.status || '').toLowerCase();
+
+    if (paymentId) {
+      // Confirmación explícita para asegurar consistencia si el webhook aún no llega
+      await controller.paymentService.confirmPayment('mercadopago', { payment_id: paymentId });
+    }
+
+    const SUCCESS_URL = process.env.PAYMENT_SUCCESS_URL || '/';
+    const CANCEL_URL  = process.env.PAYMENT_CANCEL_URL  || '/';
+    const PENDING_URL = process.env.PAYMENT_PENDING_URL || SUCCESS_URL;
+
+    if (status === 'approved') return res.redirect(SUCCESS_URL);
+    if (status === 'pending')  return res.redirect(PENDING_URL);
+    if (status === 'rejected') return res.redirect(CANCEL_URL);
+
+    // Fallback si no viene status: responde JSON útil
+    return res.json({
+      success: true,
+      message: 'Retorno MercadoPago recibido',
+      data: { payment_id: paymentId, status: status || 'desconocido' }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Error en retorno MercadoPago', error: err?.message });
+  }
+});
+
 /* -------------------------------- Webhooks -------------------------------- */
 
 // Endpoint unificado de webhooks: soporta POST y GET (necesario para MP)
 router.post('/webhooks/:gateway', mergeQueryIntoBody, controller.processWebhook.bind(controller));
-router.get('/webhooks/:gateway', mergeQueryIntoBody, controller.processWebhook.bind(controller));
+router.get('/webhooks/:gateway',  mergeQueryIntoBody, controller.processWebhook.bind(controller));
 
 /* --------------------------------- Info ----------------------------------- */
 
@@ -73,9 +121,11 @@ router.get('/info', (_req, res) => {
       gateways: '/api/payments/gateways',
       recommend: '/api/payments/gateways/recommend',
       create_payment: '/api/payments/apoderados/:id/create',
+      create_payment_alias: '/api/payments/create',
       confirm_payment: '/api/payments/confirm',
       history: '/api/payments/apoderados/:id/history',
-      webhooks: '/api/payments/webhooks/:gateway',
+      webhook: '/api/payments/webhooks/:gateway',
+      mp_return: '/api/payments/return/mercadopago'
     },
   });
 });
