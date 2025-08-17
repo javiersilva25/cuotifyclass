@@ -8,14 +8,27 @@ const Alumno      = models?.Alumno;
 const Curso       = models?.Curso;
 const Usuario     = models?.Usuario || null;
 
+// --- Helpers estrictos de URL (HTTPS y absolutas) ---
+function mustHttpsAbsolute(u, name = 'URL') {
+  if (!u) throw new Error(`${name} no definida`);
+  let url;
+  try { url = new URL(u); } catch { throw new Error(`${name} inválida: ${u}`); }
+  if (url.protocol !== 'https:') throw new Error(`${name} debe ser HTTPS absoluta: ${u}`);
+  return url.toString();
+}
+function join(base, path) {
+  const b = new URL(base);
+  return new URL(path, b).toString();
+}
+
 class MercadoPagoService {
   constructor() {
     const token =
-      process.env.MP_ACCESS_TOKEN ||
-      process.env.MERCADOPAGO_ACCESS_TOKEN;
+      process.env.MERCADOPAGO_ACCESS_TOKEN ||
+      process.env.MP_ACCESS_TOKEN;
 
     if (!token) {
-      throw new Error('Mercado Pago: falta MP_ACCESS_TOKEN/MERCADOPAGO_ACCESS_TOKEN');
+      throw new Error('Mercado Pago: falta MERCADOPAGO_ACCESS_TOKEN/MP_ACCESS_TOKEN');
     }
 
     this.client = new MercadoPagoConfig({
@@ -26,27 +39,30 @@ class MercadoPagoService {
     this.preferences = new Preference(this.client);
     this.payments    = new Payment(this.client);
 
-    // Bases para construir URLs
-    this.publicBase = process.env.PUBLIC_BASE_URL || process.env.API_URL || process.env.BASE_URL || 'http://localhost:3000';
-    this.appUrl     = process.env.APP_URL || this.publicBase; // si no hay front público, usa el back
+    // Bases públicas (debe ser HTTPS cuando trabajes con MP)
+    const FRONTEND = process.env.FRONTEND_URL || process.env.APP_URL;
+    const BACKEND  = process.env.BACKEND_URL  || process.env.PUBLIC_BASE_URL || process.env.API_URL || process.env.BASE_URL;
 
-    // Back URLs (en orden de prioridad)
-    this.successUrl =
-      process.env.MP_SUCCESS_URL ||
-      process.env.PAYMENT_SUCCESS_URL ||
-      `${this.appUrl.replace(/\/+$/, '')}/payment/success`;
+    // Construcción estricta de URLs
+    // back_urls siempre deben apuntar al FRONT (páginas visibles)
+    this.successUrl = mustHttpsAbsolute(
+      process.env.MP_SUCCESS_URL || join(FRONTEND, '/pagos/retorno?status=success'),
+      'MP_SUCCESS_URL'
+    );
+    this.failureUrl = mustHttpsAbsolute(
+      process.env.MP_FAILURE_URL || join(FRONTEND, '/pagos/retorno?status=failure'),
+      'MP_FAILURE_URL'
+    );
+    this.pendingUrl = mustHttpsAbsolute(
+      process.env.MP_PENDING_URL || join(FRONTEND, '/pagos/retorno?status=pending'),
+      'MP_PENDING_URL'
+    );
 
-    this.failureUrl =
-      process.env.MP_FAILURE_URL ||
-      process.env.PAYMENT_CANCEL_URL ||
-      `${this.appUrl.replace(/\/+$/, '')}/payment/failure`;
-
-    this.pendingUrl =
-      process.env.MP_PENDING_URL ||
-      `${this.appUrl.replace(/\/+$/, '')}/payment/pending`;
-
-    // Webhook unificado
-    this.webhookUrl = `${this.publicBase.replace(/\/+$/, '')}/api/payments/webhooks/mercadopago`;
+    // Webhook público en el BACK
+    this.webhookUrl = mustHttpsAbsolute(
+      process.env.MP_WEBHOOK_URL || join(BACKEND, '/api/payments/webhooks/mercadopago'),
+      'MP_WEBHOOK_URL'
+    );
   }
 
   async createPreference(apoderadoId, deudaIds = []) {
@@ -55,13 +71,13 @@ class MercadoPagoService {
       throw new Error('deudaIds vacío');
     }
 
-    // Payer opcional y protegido
+    // Payer opcional
     let payer = null;
     if (Usuario?.findByPk) {
       try { payer = await Usuario.findByPk(apoderadoId); } catch {}
     }
 
-    // include condicional para no romper si no existen asociaciones
+    // include condicional
     const include = [];
     if (CobroAlumno?.associations?.alumno) include.push({ association: 'alumno', attributes: ['id', 'nombre'] });
     if (CobroAlumno?.associations?.curso)  include.push({ association: 'curso',  attributes: ['id', 'nombre_curso'] });
@@ -107,21 +123,26 @@ class MercadoPagoService {
       },
     };
 
-    const pref = await this.preferences.create({ body });
+    // Log defensivo de URLs antes de llamar a MP
+    Logger.info('MP URLs', { back_urls: body.back_urls, notification_url: body.notification_url });
+
+    const resp = await this.preferences.create({ body });
+    // SDKs v2/v3 pueden devolver campos en body; resolvemos de forma segura:
+    const prefId            = resp?.id || resp?.body?.id;
+    const initPoint         = resp?.init_point || resp?.body?.init_point;
+    const sandboxInitPoint  = resp?.sandbox_init_point || resp?.body?.sandbox_init_point;
 
     Logger.info('MP preference creada', {
-      preference_id: pref.id,
+      preference_id: prefId,
       apoderado_id: apoderadoId,
       deuda_ids: deudas.map(d => d.id),
-      back_urls: body.back_urls,
-      notification_url: body.notification_url,
     });
 
     return {
       gateway: 'mercadopago',
-      preference_id: pref.id,
-      init_point: pref.init_point,
-      sandbox_init_point: pref.sandbox_init_point,
+      preference_id: prefId,
+      init_point: initPoint,
+      sandbox_init_point: sandboxInitPoint,
     };
   }
 
@@ -136,7 +157,7 @@ class MercadoPagoService {
     const payment = await this.payments.get({ id: paymentId });
     Logger.info('MP payment recibido', { id: paymentId, status: payment?.status });
 
-    const deudaIds = Array.isArray(payment?.metadata?.deuda_ids) ? payment.metadata.deuda_ids : [];
+    const deudaIds    = Array.isArray(payment?.metadata?.deuda_ids) ? payment.metadata.deuda_ids : [];
     const apoderadoId = payment?.metadata?.apoderado_id || null;
 
     if (payment?.status === 'approved' && deudaIds.length) {
@@ -158,7 +179,9 @@ class MercadoPagoService {
   }
 
   validateConfiguration() {
-    const token = process.env.MP_ACCESS_TOKEN || process.env.MERCADOPAGO_ACCESS_TOKEN;
+    const token =
+      process.env.MERCADOPAGO_ACCESS_TOKEN ||
+      process.env.MP_ACCESS_TOKEN;
     if (!token) throw new Error('MP access token no configurado');
     const isProd = token.startsWith('APP_USR');
     const isTest = token.startsWith('TEST');
