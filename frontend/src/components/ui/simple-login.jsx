@@ -168,21 +168,6 @@ export default function SimpleLogin() {
             {isRegister ? 'Inicia sesión' : 'Crear cuenta'}
           </button>
         </div>
-
-        {!isRegister && (
-          <div style={{
-            marginTop: '1.25rem',
-            padding: '0.9rem',
-            backgroundColor: '#f9fafb',
-            borderRadius: 4,
-            fontSize: '0.85rem',
-            color: '#6b7280'
-          }}>
-            <strong>Credenciales de prueba:</strong><br />
-            RUT: 14.052.405-0<br />
-            Contraseña: 123456
-          </div>
-        )}
       </div>
     </div>
   );
