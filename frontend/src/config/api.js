@@ -7,7 +7,7 @@
 const getApiBaseUrl = () => {
   // En producción, usar la URL real del backend
   if (import.meta.env.PROD) {
-    return import.meta.env.VITE_API_URL || 'https://api.tu-colegio.cl';
+    return import.meta.env.VITE_API_URL || '	https://cuotas.lemacdatalab.cl';
   }
   
   // En desarrollo, usar localhost
